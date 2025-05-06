@@ -1,0 +1,15 @@
+#!/bin/bash
+
+echo "This will install the needed packages to run CUDA"
+echo "Press Enter to continue"
+read
+
+apt-get update 
+apt-get install -y  $(cat /etc/ddistro-full-packages.txt)
+
+apt-get clean
+find  /var/lib/apt/lists/ -type f -delete
+
+echo "Done. You can now install the other components that require a Nvidia GPU!"
+read
+

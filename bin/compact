@@ -1,0 +1,41 @@
+#!/bin/bash
+
+echo "This will use jdupes to duplicated files. Useful when using txtai,whisper and xtts at the same time"
+echo "Press enter to begin"
+read
+echo -ne  "Size before jdupes :" 
+du -hs /home/dwemer
+echo "Wait"
+jdupes -1 -r -L /home/dwemer/ &>/dev/null
+echo -ne  "Size after jdupes :" 
+du -hs /home/dwemer
+
+echo "Do you want to remove download cache? This will clean some space after install optional components"
+# Prompt the user for confirmation
+read -p "Do you want to remove the directory /home/dwemer/.cache/pip/? (Y/N): " response
+
+# Convert the response to uppercase to handle lowercase inputs
+response=$(echo "$response" | tr '[:lower:]' '[:upper:]')
+
+# Check the user's response
+if [[ "$response" == "Y" ]]; then
+    # Execute the command to remove the directory
+    rm -fr /home/dwemer/.cache/pip/
+    echo "Directory /home/dwemer/.cache/pip/ has been removed."
+else
+    echo "Operation canceled."
+fi
+
+echo "Cleaning packages..."
+
+sudo find  /var/lib/apt/lists/ -type f -delete -print
+sudo apt-get clean
+
+echo "Compact Script. Done. Press enter"
+
+read
+
+
+
+
+

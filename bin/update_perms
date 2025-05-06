@@ -1,0 +1,4 @@
+#!/bin/bash
+
+cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 .
+

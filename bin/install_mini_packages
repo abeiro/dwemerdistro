@@ -1,0 +1,6 @@
+#!/bin/bash
+
+dpkg --get-selections|cut -f1 |sort > /etc/ddistro-current-packages.txt
+apt-get remove --purge $(diff /etc/ddistro-current-packages.txt /etc/ddistro-min-packages.txt |grep "<"|cut -f2 -d" ")
+
+

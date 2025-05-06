@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# Clean Caches
+# Clean local shiper models
+rm -fr /home/dwemer/remote-faster-whisper/models/*
+# Will clean downloaded models also
+rm -fr /home/dwemer/.cache/*
+# Clean xtts models
+rm -fr /home/dwemer/xtts-api-server/xtts_models
+rm  /home/dwemer/xtts-api-server/speakers/*
+mv  /home/dwemer/xtts-api-server/examples/male.wav /home/dwemer/xtts-api-server/speakers/
+
+# Clean xtts models
+rm -fr /home/dwemer/llama-cpp/models/*
+
+
+echo > /var/log/apache2/error.log
+echo > /var/log/apache2/other_vhosts_access.log
+
+rm /var/lib/postgresql/.*history*
+
+find /tmp -type f -delete
+find /var/log -type f  -exec \cp /dev/null {} \;
+find  /var/lib/apt/lists/ -type f -delete
+find  /var/tmp/  -type f -delete
+find  /var/lib/php/sessions  -type f -delete
+
+
+rm -fr /root/.local/ /root/.cache/ /root/.nv /root/.profile /root/.ssh /root/.bash_history
+
+#HerikaServer stuff
+find /var/www/html/HerikaServer/ -name "*.log" -exec \cp /dev/null {} \;
+find /var/www/html/HerikaServer/log -name "*.txt" -delete
+find /var/www/html/HerikaServer/log -name "*.log" -delete
+find /var/www/html/HerikaServer/ -name "*.db" -delete
+find /var/www/html/HerikaServer/conf  -name "conf_*.php" -delete
+find /var/www/html/HerikaServer/conf  -name "conf.php" -delete
+find /var/www/html/HerikaServer/soundcache/ -name "*.*" -delete 
+rm /var/www/html/HerikaServer/data/CurrentModel*.json
+rm -fr /home/dwemer/.vscode-server
+rm /home/dwemer/text2vec-api/start.sh; 
+rm /home/dwemer/llama-cpp/start.sh ; 
+rm /home/dwemer/remote-faster-whisper/config.yaml;
+rm /home/dwemer/xtts-api-server/start.sh
+rm /home/dwemer/mimic3/start.sh
+rm /home/dwemer/MeloTTS/start.sh
+rm /home/dwemer/minime-t5/start.sh
+ln -sf /home/dwemer/mimic3/start-onlyonevoice.sh /home/dwemer/mimic3/start.sh
+
+if [ "$1"=="full" ]
+then
+	# Will also clean venvs. Will need a full reinstall
+	echo "Are you sure? Ctrl+C to cancel now!"
+	read
+	rm -fr /home/dwemer/python-*
+	rm -fr /home/dwemer/.local /home/dwemer/.cache /home/dwemer/.profile /home/dwemer/.ssh /home/dwemer/.wget-hsts  /home/dwemer/.bash_history /home/dwemer/.bash_logout 
+	rm -fr /home/dwemer/go
+	rm -fr /home/dwemer/.nv
+
+	echo "done"
+else
+	jdupes -1 -r -L /home/dwemer/
+fi
+
+echo "Execute Update.bat"

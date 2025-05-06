@@ -1,0 +1,9 @@
+#!/bin/bash
+
+fname=/tmp/database_$(date +\%Y-\%m-\%d).sql
+pg_dump -d dwemer > $fname
+echo "Database backuped on $fname";
+
+
+
+

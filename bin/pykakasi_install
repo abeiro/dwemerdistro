@@ -1,0 +1,22 @@
+#!/bin/bash
+
+check_error() {
+  if [ $? -ne 0 ]; then
+    echo -e "\e[41mError:\e[0m $1"
+    echo "Press Enter to exit..."
+    read
+    exit 1
+  fi
+}
+
+cd /home/dwemer
+rm -rf kakasi
+mkdir kakasi
+cd kakasi
+
+python3 -m venv kakasi_env
+source kakasi_env/bin/activate
+
+pip install pykakasi
+check_error "Failed to install required pip packages."
+deactivate

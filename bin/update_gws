@@ -1,0 +1,29 @@
+#!/bin/bash
+
+
+cd /var/www/html/HerikaServer
+git reset --hard HEAD
+git pull
+
+cd /home/dwemer/minime-t5
+git reset --hard HEAD
+git pull
+
+cd /home/dwemer/MeloTTS
+git reset --hard HEAD
+git pull
+
+cd /home/dwemer/remote-faster-whisper
+git reset --hard HEAD
+git pull
+
+cd /home/dwemer/xtts-api-server
+git reset --hard HEAD
+git pull
+
+
+#sudo su -c "cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 ."
+#cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 .
+sudo /usr/local/bin/update_perms
+
+

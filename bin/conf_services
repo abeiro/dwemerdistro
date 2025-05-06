@@ -1,0 +1,17 @@
+#!/bin/bash
+
+/home/dwemer/text2vec-api/conf.sh
+
+/home/dwemer/remote-faster-whisper/conf.sh
+
+/home/dwemer/xtts-api-server/conf.sh
+
+/home/dwemer/llama-cpp/conf.sh
+
+/home/dwemer/mimic3/conf.sh
+
+/home/dwemer/minime-t5/conf.sh
+
+/home/dwemer/MeloTTS/conf.sh
+
+
