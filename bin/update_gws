@@ -48,7 +48,7 @@ printf ${NC}
 cd /home/dwemer/dwemerdistro/
 git reset --hard HEAD
 git pull
-/home/dwemer/dwemerdistro/update.sh
+sudo /home/dwemer/dwemerdistro/update.sh
 
 echo "= Cleaning..."
 #sudo su -c "cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 ."
