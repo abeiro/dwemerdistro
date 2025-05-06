@@ -1,29 +1,40 @@
 #!/bin/bash
 
-
+echo "= Updating Server"
 cd /var/www/html/HerikaServer
 git reset --hard HEAD
 git pull
 
+echo "= Updating MiniMe"
 cd /home/dwemer/minime-t5
 git reset --hard HEAD
 git pull
 
+echo "= Updating MeloTTS"
 cd /home/dwemer/MeloTTS
 git reset --hard HEAD
 git pull
 
+echo "= Updating LocalWhisper"
 cd /home/dwemer/remote-faster-whisper
 git reset --hard HEAD
 git pull
 
+echo "= Updating XTTSv2 server"
 cd /home/dwemer/xtts-api-server
 git reset --hard HEAD
 git pull
 
+echo "= Updating Server Scripts"
+cd /home/dwemer/dwemerdistro/
+git reset --hard HEAD
+git pull
+/home/dwemer/dwemerdistro/update.sh
 
+echo "= Cleaning..."
 #sudo su -c "cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 ."
 #cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 .
 sudo /usr/local/bin/update_perms
+echo "Done!"
 
 
