@@ -1,31 +1,50 @@
 #!/bin/bash
 
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[1;31m'
+NC='\033[0m' # No Color
+
+printf ${GREEN}
 echo "= Updating Server"
+printf ${NC}
+
 cd /var/www/html/HerikaServer
 git reset --hard HEAD
 git pull
 
+printf ${GREEN}
 echo "= Updating MiniMe"
+printf ${NC}
+
 cd /home/dwemer/minime-t5
 git reset --hard HEAD
 git pull
 
+printf ${GREEN}
 echo "= Updating MeloTTS"
+printf ${NC}
 cd /home/dwemer/MeloTTS
 git reset --hard HEAD
 git pull
 
+printf ${GREEN}
 echo "= Updating LocalWhisper"
+printf ${NC}
 cd /home/dwemer/remote-faster-whisper
 git reset --hard HEAD
 git pull
 
+printf ${GREEN}
 echo "= Updating XTTSv2 server"
+printf ${NC}
 cd /home/dwemer/xtts-api-server
 git reset --hard HEAD
 git pull
 
+printf ${GREEN}
 echo "= Updating Server Scripts"
+printf ${NC}
 cd /home/dwemer/dwemerdistro/
 git reset --hard HEAD
 git pull
@@ -35,6 +54,9 @@ echo "= Cleaning..."
 #sudo su -c "cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 ."
 #cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 .
 sudo /usr/local/bin/update_perms
+
+printf ${GREEN}
 echo "Done!"
+printf ${NC}
 
 
