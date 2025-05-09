@@ -30,4 +30,5 @@ else
 fi
 
 echo "[SUCCESS] Update completed successfully!"
+#DO NOT REMOVE Begin CHIM Server Update as this triggers the update_gws step in the CHIM launcher.
 echo "Begin CHIM Server Update"
