@@ -35,7 +35,7 @@ printf "${BOLD}${CYAN}          DWEMER DYNAMICS SYSTEM UPDATE                ${N
 printf "${BOLD}${CYAN}=======================================================${NC}\n\n"
 
 # Server update
-print_header "UPDATING SERVER"
+print_header "UPDATING CHIM SERVER"
 
 cd /var/www/html/HerikaServer
 printf "${CYAN}>> Resetting repository...${NC}\n"
@@ -45,10 +45,10 @@ git pull
 # Set permissions for HerikaServer immediately after updating
 echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/HerikaServer
 echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/HerikaServer
-print_success "Server updated successfully"
+printf "${GREEN}[SUCCESS] Server updated successfully${NC}\n"
 
 # MiniMe update
-print_header "UPDATING MINIME"
+print_header "UPDATING MINI-ME & TXT2VEC"
 
 cd /home/dwemer/minime-t5
 printf "${CYAN}>> Cleaning untracked files...${NC}\n"
@@ -60,7 +60,7 @@ git pull
 # Set permissions for minime-t5
 sudo chown -R dwemer:dwemer /home/dwemer/minime-t5
 sudo chmod -R 755 /home/dwemer/minime-t5
-print_success "MiniMe updated successfully"
+printf "${GREEN}[SUCCESS] MiniMe updated successfully${NC}\n"
 
 # MeloTTS update
 print_header "UPDATING MELOTTS"
@@ -75,7 +75,7 @@ git pull
 # Set permissions for MeloTTS
 sudo chown -R dwemer:dwemer /home/dwemer/MeloTTS
 sudo chmod -R 755 /home/dwemer/MeloTTS
-print_success "MeloTTS updated successfully"
+printf "${GREEN}[SUCCESS] MeloTTS updated successfully${NC}\n"
 
 # LocalWhisper update
 print_header "UPDATING LOCALWHISPER"
@@ -101,10 +101,10 @@ git pull
 # Set permissions for LocalWhisper
 sudo chown -R dwemer:dwemer /home/dwemer/remote-faster-whisper
 sudo chmod -R 755 /home/dwemer/remote-faster-whisper
-print_success "LocalWhisper updated successfully"
+printf "${GREEN}[SUCCESS] LocalWhisper updated successfully${NC}\n"
 
 # XTTSv2 server update
-print_header "UPDATING XTTSV2 SERVER"
+print_header "UPDATING CHIM XTTS"
 
 cd /home/dwemer/xtts-api-server
 
@@ -140,13 +140,13 @@ fi
 # Set permissions for XTTS
 sudo chown -R dwemer:dwemer /home/dwemer/xtts-api-server
 sudo chmod -R 755 /home/dwemer/xtts-api-server
-print_success "XTTSv2 server updated successfully"
+printf "${GREEN}[SUCCESS] XTTSv2 server updated successfully${NC}\n"
 
 # System permission updates
 print_header "RUNNING SYSTEM PERMISSION UPDATES"
 
 sudo /usr/local/bin/update_perms
-print_success "System permissions updated"
+printf "${GREEN}[SUCCESS] System permissions updated${NC}\n"
 
 # Final message
 printf "\n${BOLD}${GREEN}=======================================================${NC}\n"
