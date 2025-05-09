@@ -75,16 +75,6 @@ if [ -d "speakers.backup" ]; then
     rm -rf speakers.backup
 fi
 
-printf ${GREEN}
-echo "= Updating Server Scripts"
-printf ${NC}
-cd /home/dwemer/dwemerdistro/
-# Force clean untracked files
-git clean -fd
-git reset --hard HEAD
-git pull
-sudo /home/dwemer/dwemerdistro/update.sh
-
 echo "= Cleaning..."
 #sudo su -c "cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 ."
 #cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 .
