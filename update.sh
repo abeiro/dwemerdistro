@@ -16,7 +16,7 @@ print_header() {
 
 # Main title
 printf "\n${BOLD}=======================================================${NC}\n"
-printf "${BOLD}             DWEMER DYNAMICS UPDATER                  ${NC}\n"
+printf "${BOLD}             CORE SYSTEM UPDATER                  ${NC}\n"
 printf "${BOLD}=======================================================${NC}\n\n"
 
 print_header "CHECKING SYSTEM"
@@ -52,7 +52,7 @@ else
 fi
 
 printf "\n${BOLD}=======================================================${NC}\n"
-printf "${BOLD}${GREEN}             UPDATE COMPLETED SUCCESSFULLY!          ${NC}\n"
+printf "${BOLD}${GREEN}        CORE SYSTEM UPDATED SUCCESSFULLY!          ${NC}\n"
 printf "${BOLD}=======================================================${NC}\n\n"
 
 #DO NOT REMOVE Begin CHIM Server Update as this triggers the update_gws step in the CHIM launcher.

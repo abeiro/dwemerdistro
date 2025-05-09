@@ -147,7 +147,7 @@ fi
 # Set permissions for XTTS
 sudo chown -R dwemer:dwemer /home/dwemer/xtts-api-server
 sudo chmod -R 755 /home/dwemer/xtts-api-server
-printf "${GREEN}[SUCCESS] XTTSv2 server updated successfully${NC}\n"
+printf "${GREEN}[SUCCESS] CHIM XTTS updated successfully${NC}\n"
 
 # System permission updates
 print_header "RUNNING SYSTEM PERMISSION UPDATES"
