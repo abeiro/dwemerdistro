@@ -30,3 +30,4 @@ else
 fi
 
 echo "[SUCCESS] Update completed successfully!"
+echo "Begin CHIM Server Update"
