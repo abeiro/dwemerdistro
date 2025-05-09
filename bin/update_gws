@@ -18,6 +18,8 @@ echo "= Updating MiniMe"
 printf ${NC}
 
 cd /home/dwemer/minime-t5
+# Force clean untracked files
+git clean -fd
 git reset --hard HEAD
 git pull
 
@@ -25,6 +27,8 @@ printf ${GREEN}
 echo "= Updating MeloTTS"
 printf ${NC}
 cd /home/dwemer/MeloTTS
+# Force clean untracked files
+git clean -fd
 git reset --hard HEAD
 git pull
 
@@ -32,6 +36,8 @@ printf ${GREEN}
 echo "= Updating LocalWhisper"
 printf ${NC}
 cd /home/dwemer/remote-faster-whisper
+# Force clean untracked files
+git clean -fd
 git reset --hard HEAD
 git pull
 
@@ -39,13 +45,42 @@ printf ${GREEN}
 echo "= Updating XTTSv2 server"
 printf ${NC}
 cd /home/dwemer/xtts-api-server
+
+# Backup speakers folder if it exists
+if [ -d "speakers" ]; then
+    printf ${YELLOW}
+    echo "Backing up speakers folder..."
+    printf ${NC}
+    cp -r speakers speakers.backup
+fi
+
+# Exclude speakers folder from cleaning if it exists
+if [ -d "speakers" ]; then
+    # Force clean everything except speakers folder
+    git clean -fd -e speakers/
+else
+    # Force clean all untracked files
+    git clean -fd
+fi
+
 git reset --hard HEAD
 git pull
+
+# Restore speakers folder if backup exists
+if [ -d "speakers.backup" ]; then
+    printf ${YELLOW}
+    echo "Restoring speakers folder..."
+    printf ${NC}
+    cp -r speakers.backup/* speakers/ 2>/dev/null || true
+    rm -rf speakers.backup
+fi
 
 printf ${GREEN}
 echo "= Updating Server Scripts"
 printf ${NC}
 cd /home/dwemer/dwemerdistro/
+# Force clean untracked files
+git clean -fd
 git reset --hard HEAD
 git pull
 sudo /home/dwemer/dwemerdistro/update.sh
@@ -58,5 +93,3 @@ sudo /usr/local/bin/update_perms
 printf ${GREEN}
 echo "Done!"
 printf ${NC}
-
-
