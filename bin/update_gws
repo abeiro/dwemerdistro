@@ -5,6 +5,9 @@ YELLOW='\033[1;33m'
 RED='\033[1;31m'
 NC='\033[0m' # No Color
 
+# Store password for sudo commands
+PASSWORD="dwemer"
+
 printf ${GREEN}
 echo "= Updating Server"
 printf ${NC}
@@ -13,8 +16,8 @@ cd /var/www/html/HerikaServer
 git reset --hard HEAD
 git pull
 # Set permissions for HerikaServer immediately after updating
-sudo chown -R dwemer:www-data /var/www/html/HerikaServer
-sudo chmod -R 775 /var/www/html/HerikaServer
+echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/HerikaServer
+echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/HerikaServer
 
 printf ${GREEN}
 echo "= Updating MiniMe"
