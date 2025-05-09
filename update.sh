@@ -1,34 +1,59 @@
 #!/bin/bash
 # Enhanced update script with minimal output
 
-echo "[INFO] Checking source directories..."
+# Simple color palette
+GREEN='\033[0;32m'
+RED='\033[1;31m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+# Print a header
+print_header() {
+    printf "\n${BOLD}-------------------------------------------------------${NC}\n"
+    printf "${BOLD} %s ${NC}\n" "$1"
+    printf "${BOLD}-------------------------------------------------------${NC}\n"
+}
+
+# Main title
+printf "\n${BOLD}=======================================================${NC}\n"
+printf "${BOLD}             DWEMER DYNAMICS UPDATER                  ${NC}\n"
+printf "${BOLD}=======================================================${NC}\n\n"
+
+print_header "CHECKING SYSTEM"
+
+printf ">> Checking source directories...\n"
 if [ ! -d "/home/dwemer/dwemerdistro/bin" ]; then
-    echo "[ERROR] Source directory /home/dwemer/dwemerdistro/bin not found!"
+    printf "${RED}[ERROR] Source directory /home/dwemer/dwemerdistro/bin not found!${NC}\n"
     exit 1
 fi
 if [ ! -d "/home/dwemer/dwemerdistro/etc" ]; then
-    echo "[ERROR] Source directory /home/dwemer/dwemerdistro/etc not found!"
+    printf "${RED}[ERROR] Source directory /home/dwemer/dwemerdistro/etc not found!${NC}\n"
     exit 1
 fi
 
-echo "[INFO] Copying scripts to /usr/local/bin..."
+print_header "UPDATING SYSTEM FILES"
+
+printf ">> Copying scripts to /usr/local/bin...\n"
 cp /home/dwemer/dwemerdistro/bin/* /usr/local/bin/ 2>/dev/null
 if [ $? -eq 0 ]; then
-    echo "[SUCCESS] Scripts successfully copied to /usr/local/bin/"
+    printf "${GREEN}[SUCCESS] Scripts successfully copied to /usr/local/bin/${NC}\n"
 else
-    echo "[ERROR] Error copying scripts to /usr/local/bin/"
+    printf "${RED}[ERROR] Error copying scripts to /usr/local/bin/${NC}\n"
     exit 1
 fi
 
-echo "[INFO] Copying configuration files to /etc..."
+printf ">> Copying configuration files to /etc...\n"
 cp /home/dwemer/dwemerdistro/etc/* /etc/ 2>/dev/null
 if [ $? -eq 0 ]; then
-    echo "[SUCCESS] Configuration files successfully copied to /etc/"
+    printf "${GREEN}[SUCCESS] Configuration files successfully copied to /etc/${NC}\n"
 else
-    echo "[ERROR] Error copying configuration files to /etc/"
+    printf "${RED}[ERROR] Error copying configuration files to /etc/${NC}\n"
     exit 1
 fi
 
-echo "[SUCCESS] Update completed successfully!"
+printf "\n${BOLD}=======================================================${NC}\n"
+printf "${BOLD}${GREEN}             UPDATE COMPLETED SUCCESSFULLY!          ${NC}\n"
+printf "${BOLD}=======================================================${NC}\n\n"
+
 #DO NOT REMOVE Begin CHIM Server Update as this triggers the update_gws step in the CHIM launcher.
 echo "Begin CHIM Server Update"
