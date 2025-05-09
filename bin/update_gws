@@ -45,6 +45,19 @@ printf ${GREEN}
 echo "= Updating LocalWhisper"
 printf ${NC}
 cd /home/dwemer/remote-faster-whisper
+
+# Check current remote URL
+CURRENT_REMOTE=$(git config --get remote.origin.url)
+TARGET_REMOTE="https://github.com/abeiro/remote-faster-whisper.git"
+
+# Set the correct remote if needed
+if [ "$CURRENT_REMOTE" != "$TARGET_REMOTE" ]; then
+    printf ${YELLOW}
+    echo "Setting remote to $TARGET_REMOTE"
+    printf ${NC}
+    git remote set-url origin $TARGET_REMOTE
+fi
+
 # Force clean untracked files
 git clean -fd
 git reset --hard HEAD
