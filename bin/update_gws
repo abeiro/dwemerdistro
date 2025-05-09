@@ -12,6 +12,9 @@ printf ${NC}
 cd /var/www/html/HerikaServer
 git reset --hard HEAD
 git pull
+# Set permissions for HerikaServer immediately after updating
+sudo chown -R dwemer:www-data /var/www/html/HerikaServer
+sudo chmod -R 775 /var/www/html/HerikaServer
 
 printf ${GREEN}
 echo "= Updating MiniMe"
@@ -22,6 +25,9 @@ cd /home/dwemer/minime-t5
 git clean -fd
 git reset --hard HEAD
 git pull
+# Set permissions for minime-t5
+sudo chown -R dwemer:dwemer /home/dwemer/minime-t5
+sudo chmod -R 755 /home/dwemer/minime-t5
 
 printf ${GREEN}
 echo "= Updating MeloTTS"
@@ -31,6 +37,9 @@ cd /home/dwemer/MeloTTS
 git clean -fd
 git reset --hard HEAD
 git pull
+# Set permissions for MeloTTS
+sudo chown -R dwemer:dwemer /home/dwemer/MeloTTS
+sudo chmod -R 755 /home/dwemer/MeloTTS
 
 printf ${GREEN}
 echo "= Updating LocalWhisper"
@@ -40,6 +49,9 @@ cd /home/dwemer/remote-faster-whisper
 git clean -fd
 git reset --hard HEAD
 git pull
+# Set permissions for LocalWhisper
+sudo chown -R dwemer:dwemer /home/dwemer/remote-faster-whisper
+sudo chmod -R 755 /home/dwemer/remote-faster-whisper
 
 printf ${GREEN}
 echo "= Updating XTTSv2 server"
@@ -75,9 +87,14 @@ if [ -d "speakers.backup" ]; then
     rm -rf speakers.backup
 fi
 
-echo "= Cleaning..."
-#sudo su -c "cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 ."
-#cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 .
+# Set permissions for XTTS
+sudo chown -R dwemer:dwemer /home/dwemer/xtts-api-server
+sudo chmod -R 755 /home/dwemer/xtts-api-server
+
+# Also run the update_perms script for any other locations
+printf ${GREEN}
+echo "= Running system permission updates..."
+printf ${NC}
 sudo /usr/local/bin/update_perms
 
 printf ${GREEN}
