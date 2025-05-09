@@ -11,8 +11,16 @@ PASSWORD="dwemer"
 
 # Helper function for section headers
 print_header() {
+    local title="$1"
+    local branch=""
+    
+    # Check if second parameter (branch) is provided
+    if [ ! -z "$2" ]; then
+        branch=" ($2)"
+    fi
+    
     printf "\n${BOLD}-------------------------------------------------------${NC}\n"
-    printf "${BOLD} %s ${NC}\n" "$1"
+    printf "${BOLD} %s%s ${NC}\n" "$title" "$branch"
     printf "${BOLD}-------------------------------------------------------${NC}\n"
 }
 
@@ -31,9 +39,10 @@ printf "${BOLD}          DWEMER DYNAMICS SYSTEM UPDATE                ${NC}\n"
 printf "${BOLD}=======================================================${NC}\n\n"
 
 # Server update
-print_header "UPDATING CHIM SERVER"
-
 cd /var/www/html/HerikaServer
+BRANCH=$(git branch --show-current)
+print_header "UPDATING CHIM SERVER" "$BRANCH"
+
 printf ">> Resetting repository...\n"
 git reset --hard HEAD
 printf ">> Pulling latest changes...\n"
@@ -44,9 +53,10 @@ echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/HerikaServer
 printf "${GREEN}[SUCCESS] Server updated successfully${NC}\n"
 
 # MiniMe update
-print_header "UPDATING MINI-ME & TXT2VEC"
-
 cd /home/dwemer/minime-t5
+BRANCH=$(git branch --show-current)
+print_header "UPDATING MINI-ME & TXT2VEC" "$BRANCH"
+
 printf ">> Cleaning untracked files...\n"
 git clean -fd
 printf ">> Resetting repository...\n"
@@ -59,9 +69,10 @@ sudo chmod -R 755 /home/dwemer/minime-t5
 printf "${GREEN}[SUCCESS] MiniMe updated successfully${NC}\n"
 
 # MeloTTS update
-print_header "UPDATING MELOTTS"
-
 cd /home/dwemer/MeloTTS
+BRANCH=$(git branch --show-current)
+print_header "UPDATING MELOTTS" "$BRANCH"
+
 printf ">> Cleaning untracked files...\n"
 git clean -fd
 printf ">> Resetting repository...\n"
@@ -74,9 +85,9 @@ sudo chmod -R 755 /home/dwemer/MeloTTS
 printf "${GREEN}[SUCCESS] MeloTTS updated successfully${NC}\n"
 
 # LocalWhisper update
-print_header "UPDATING LOCALWHISPER"
-
 cd /home/dwemer/remote-faster-whisper
+BRANCH=$(git branch --show-current)
+print_header "UPDATING LOCALWHISPER" "$BRANCH"
 
 # Check current remote URL
 CURRENT_REMOTE=$(git config --get remote.origin.url)
@@ -100,9 +111,9 @@ sudo chmod -R 755 /home/dwemer/remote-faster-whisper
 printf "${GREEN}[SUCCESS] LocalWhisper updated successfully${NC}\n"
 
 # XTTSv2 server update
-print_header "UPDATING CHIM XTTS"
-
 cd /home/dwemer/xtts-api-server
+BRANCH=$(git branch --show-current)
+print_header "UPDATING CHIM XTTS" "$BRANCH"
 
 # Backup speakers folder if it exists
 if [ -d "speakers" ]; then
