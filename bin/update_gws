@@ -1,12 +1,8 @@
 #!/bin/bash
 
-# Enhanced color palette
+# Simplified color palette - only red and green for specific cases
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 RED='\033[1;31m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
@@ -15,9 +11,9 @@ PASSWORD="dwemer"
 
 # Helper function for section headers
 print_header() {
-    printf "\n${BOLD}${BLUE}-------------------------------------------------------${NC}\n"
-    printf "${BOLD}${PURPLE} %s ${NC}\n" "$1"
-    printf "${BLUE}-------------------------------------------------------${NC}\n"
+    printf "\n${BOLD}-------------------------------------------------------${NC}\n"
+    printf "${BOLD} %s ${NC}\n" "$1"
+    printf "${BOLD}-------------------------------------------------------${NC}\n"
 }
 
 # Helper function for completion messages
@@ -26,21 +22,21 @@ print_success() {
 }
 
 print_warning() {
-    printf "${YELLOW}[WARNING] %s${NC}\n" "$1"
+    printf "${RED}[WARNING] %s${NC}\n" "$1"
 }
 
 # Main title
-printf "\n${BOLD}${CYAN}=======================================================${NC}\n"
-printf "${BOLD}${CYAN}          DWEMER DYNAMICS SYSTEM UPDATE                ${NC}\n"
-printf "${BOLD}${CYAN}=======================================================${NC}\n\n"
+printf "\n${BOLD}=======================================================${NC}\n"
+printf "${BOLD}          DWEMER DYNAMICS SYSTEM UPDATE                ${NC}\n"
+printf "${BOLD}=======================================================${NC}\n\n"
 
 # Server update
 print_header "UPDATING CHIM SERVER"
 
 cd /var/www/html/HerikaServer
-printf "${CYAN}>> Resetting repository...${NC}\n"
+printf ">> Resetting repository...\n"
 git reset --hard HEAD
-printf "${CYAN}>> Pulling latest changes...${NC}\n"
+printf ">> Pulling latest changes...\n"
 git pull
 # Set permissions for HerikaServer immediately after updating
 echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/HerikaServer
@@ -51,11 +47,11 @@ printf "${GREEN}[SUCCESS] Server updated successfully${NC}\n"
 print_header "UPDATING MINI-ME & TXT2VEC"
 
 cd /home/dwemer/minime-t5
-printf "${CYAN}>> Cleaning untracked files...${NC}\n"
+printf ">> Cleaning untracked files...\n"
 git clean -fd
-printf "${CYAN}>> Resetting repository...${NC}\n"
+printf ">> Resetting repository...\n"
 git reset --hard HEAD
-printf "${CYAN}>> Pulling latest changes...${NC}\n"
+printf ">> Pulling latest changes...\n"
 git pull
 # Set permissions for minime-t5
 sudo chown -R dwemer:dwemer /home/dwemer/minime-t5
@@ -66,11 +62,11 @@ printf "${GREEN}[SUCCESS] MiniMe updated successfully${NC}\n"
 print_header "UPDATING MELOTTS"
 
 cd /home/dwemer/MeloTTS
-printf "${CYAN}>> Cleaning untracked files...${NC}\n"
+printf ">> Cleaning untracked files...\n"
 git clean -fd
-printf "${CYAN}>> Resetting repository...${NC}\n"
+printf ">> Resetting repository...\n"
 git reset --hard HEAD
-printf "${CYAN}>> Pulling latest changes...${NC}\n"
+printf ">> Pulling latest changes...\n"
 git pull
 # Set permissions for MeloTTS
 sudo chown -R dwemer:dwemer /home/dwemer/MeloTTS
@@ -92,11 +88,11 @@ if [ "$CURRENT_REMOTE" != "$TARGET_REMOTE" ]; then
     git remote set-url origin $TARGET_REMOTE
 fi
 
-printf "${CYAN}>> Cleaning untracked files...${NC}\n"
+printf ">> Cleaning untracked files...\n"
 git clean -fd
-printf "${CYAN}>> Resetting repository...${NC}\n"
+printf ">> Resetting repository...\n"
 git reset --hard HEAD
-printf "${CYAN}>> Pulling latest changes...${NC}\n"
+printf ">> Pulling latest changes...\n"
 git pull
 # Set permissions for LocalWhisper
 sudo chown -R dwemer:dwemer /home/dwemer/remote-faster-whisper
@@ -116,18 +112,18 @@ fi
 
 # Exclude speakers folder from cleaning if it exists
 if [ -d "speakers" ]; then
-    printf "${CYAN}>> Cleaning files (preserving speakers folder)...${NC}\n"
+    printf ">> Cleaning files (preserving speakers folder)...\n"
     # Force clean everything except speakers folder
     git clean -fd -e speakers/
 else
-    printf "${CYAN}>> Cleaning untracked files...${NC}\n"
+    printf ">> Cleaning untracked files...\n"
     # Force clean all untracked files
     git clean -fd
 fi
 
-printf "${CYAN}>> Resetting repository...${NC}\n"
+printf ">> Resetting repository...\n"
 git reset --hard HEAD
-printf "${CYAN}>> Pulling latest changes...${NC}\n"
+printf ">> Pulling latest changes...\n"
 git pull
 
 # Restore speakers folder if backup exists
@@ -149,6 +145,6 @@ sudo /usr/local/bin/update_perms
 printf "${GREEN}[SUCCESS] System permissions updated${NC}\n"
 
 # Final message
-printf "\n${BOLD}${GREEN}=======================================================${NC}\n"
+printf "\n${BOLD}=======================================================${NC}\n"
 printf "${BOLD}${GREEN}                ALL UPDATES COMPLETED!               ${NC}\n"
-printf "${BOLD}${GREEN}=======================================================${NC}\n\n"
+printf "${BOLD}=======================================================${NC}\n\n"
