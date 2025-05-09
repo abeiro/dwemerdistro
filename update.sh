@@ -1,5 +1,5 @@
 #!/bin/bash
-# Enhanced update script with logging
+# Enhanced update script with minimal output
 
 echo "[INFO] Checking source directories..."
 if [ ! -d "/home/dwemer/dwemerdistro/bin" ]; then
@@ -11,14 +11,8 @@ if [ ! -d "/home/dwemer/dwemerdistro/etc" ]; then
     exit 1
 fi
 
-echo "[INFO] Found these scripts to update:"
-ls -la /home/dwemer/dwemerdistro/bin/
-
-echo "[INFO] Found these config files to update:"
-ls -la /home/dwemer/dwemerdistro/etc/
-
 echo "[INFO] Copying scripts to /usr/local/bin..."
-cp -v /home/dwemer/dwemerdistro/bin/* /usr/local/bin/
+cp /home/dwemer/dwemerdistro/bin/* /usr/local/bin/ 2>/dev/null
 if [ $? -eq 0 ]; then
     echo "[SUCCESS] Scripts successfully copied to /usr/local/bin/"
 else
@@ -27,7 +21,7 @@ else
 fi
 
 echo "[INFO] Copying configuration files to /etc..."
-cp -v /home/dwemer/dwemerdistro/etc/* /etc/
+cp /home/dwemer/dwemerdistro/etc/* /etc/ 2>/dev/null
 if [ $? -eq 0 ]; then
     echo "[SUCCESS] Configuration files successfully copied to /etc/"
 else
