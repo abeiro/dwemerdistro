@@ -71,7 +71,7 @@ printf "${GREEN}[SUCCESS] MiniMe updated successfully${NC}\n"
 # MeloTTS update
 cd /home/dwemer/MeloTTS
 BRANCH=$(git branch --show-current)
-print_header "UPDATING MELOTTS" "$BRANCH"
+print_header "UPDATING MELO-TTS" "$BRANCH"
 
 printf ">> Cleaning untracked files...\n"
 git clean -fd
