@@ -57,12 +57,12 @@ cd /home/dwemer/minime-t5
 BRANCH=$(git branch --show-current)
 print_header "UPDATING MINI-ME & TXT2VEC" "$BRANCH"
 
-printf ">> Cleaning untracked files...\n"
-git clean -fd
-printf ">> Resetting repository...\n"
-git reset --hard HEAD
+printf ">> Stashing local changes (including untracked files)...\n"
+git stash push -u
 printf ">> Pulling latest changes...\n"
 git pull
+printf ">> Attempting to reapply stashed changes...\n"
+git stash pop
 # Set permissions for minime-t5
 sudo chown -R dwemer:dwemer /home/dwemer/minime-t5
 sudo chmod -R 755 /home/dwemer/minime-t5
@@ -73,12 +73,12 @@ cd /home/dwemer/MeloTTS
 BRANCH=$(git branch --show-current)
 print_header "UPDATING MELO-TTS" "$BRANCH"
 
-printf ">> Cleaning untracked files...\n"
-git clean -fd
-printf ">> Resetting repository...\n"
-git reset --hard HEAD
+printf ">> Stashing local changes (including untracked files)...\n"
+git stash push -u
 printf ">> Pulling latest changes...\n"
 git pull
+printf ">> Attempting to reapply stashed changes...\n"
+git stash pop
 # Set permissions for MeloTTS
 sudo chown -R dwemer:dwemer /home/dwemer/MeloTTS
 sudo chmod -R 755 /home/dwemer/MeloTTS
@@ -99,12 +99,12 @@ if [ "$CURRENT_REMOTE" != "$TARGET_REMOTE" ]; then
     git remote set-url origin $TARGET_REMOTE
 fi
 
-printf ">> Cleaning untracked files...\n"
-git clean -fd
-printf ">> Resetting repository...\n"
-git reset --hard HEAD
+printf ">> Stashing local changes (including untracked files)...\n"
+git stash push -u
 printf ">> Pulling latest changes...\n"
 git pull
+printf ">> Attempting to reapply stashed changes...\n"
+git stash pop
 # Set permissions for LocalWhisper
 sudo chown -R dwemer:dwemer /home/dwemer/remote-faster-whisper
 sudo chmod -R 755 /home/dwemer/remote-faster-whisper
@@ -121,21 +121,12 @@ if [ -d "speakers" ]; then
     cp -r speakers speakers.backup
 fi
 
-# Exclude speakers folder from cleaning if it exists
-if [ -d "speakers" ]; then
-    printf ">> Cleaning files (preserving speakers folder)...\n"
-    # Force clean everything except speakers folder
-    git clean -fd -e speakers/
-else
-    printf ">> Cleaning untracked files...\n"
-    # Force clean all untracked files
-    git clean -fd
-fi
-
-printf ">> Resetting repository...\n"
-git reset --hard HEAD
+printf ">> Stashing local changes (including untracked files)...\n"
+git stash push -u
 printf ">> Pulling latest changes...\n"
 git pull
+printf ">> Attempting to reapply stashed changes...\n"
+git stash pop
 
 # Restore speakers folder if backup exists
 if [ -d "speakers.backup" ]; then
