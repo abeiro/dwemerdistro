@@ -57,37 +57,10 @@ cd /home/dwemer/minime-t5
 BRANCH=$(git branch --show-current)
 print_header "UPDATING MINI-ME & TXT2VEC" "$BRANCH"
 
-stashed_something=false
-# Check if there are any changes (modified, staged, or untracked)
-if ! git diff --quiet HEAD || ! git diff --quiet --cached || ! test -z "$(git ls-files --others --exclude-standard)"; then
-    printf ">> Local changes detected. Stashing (including untracked files)...\n"
-    git stash push -u -m "Auto-stash before update_gws pull"
-    stashed_something=true
-else
-    printf ">> No local changes to stash.\n"
-fi
-
+printf ">> Resetting repository...\n"
+git reset --hard HEAD
 printf ">> Pulling latest changes...\n"
 git pull
-
-if [ "$stashed_something" = true ]; then
-    printf ">> Attempting to reapply stashed changes...\n"
-    if ! git stash pop --index; then
-        printf "${RED}>> Conflicts detected while applying stash. Resolving by keeping pulled versions for conflicted files...${NC}\n"
-        git diff --name-only --diff-filter=U --relative | while IFS= read -r conflicted_file; do
-            printf ">> Resolving conflict in '$conflicted_file': keeping version from pull.\n"
-            git checkout --ours -- "$conflicted_file"
-            git add -- "$conflicted_file"
-        done
-        printf ">> Dropping the stash after conflict resolution...\n"
-        git stash drop stash@{0}
-        printf "${GREEN}>> Conflicts resolved. Stashed changes to conflicting files discarded. Other stashed changes applied.${NC}\n"
-    else
-        printf "${GREEN}>> Stashed changes reapplied successfully.${NC}\n"
-    fi
-else
-    printf ">> No stashed changes to reapply (as none were made by this script run).\n"
-fi
 
 # Set permissions for minime-t5
 sudo chown -R dwemer:dwemer /home/dwemer/minime-t5
@@ -99,37 +72,10 @@ cd /home/dwemer/MeloTTS
 BRANCH=$(git branch --show-current)
 print_header "UPDATING MELO-TTS" "$BRANCH"
 
-stashed_something=false
-# Check if there are any changes (modified, staged, or untracked)
-if ! git diff --quiet HEAD || ! git diff --quiet --cached || ! test -z "$(git ls-files --others --exclude-standard)"; then
-    printf ">> Local changes detected. Stashing (including untracked files)...\n"
-    git stash push -u -m "Auto-stash before update_gws pull"
-    stashed_something=true
-else
-    printf ">> No local changes to stash.\n"
-fi
-
+printf ">> Resetting repository...\n"
+git reset --hard HEAD
 printf ">> Pulling latest changes...\n"
 git pull
-
-if [ "$stashed_something" = true ]; then
-    printf ">> Attempting to reapply stashed changes...\n"
-    if ! git stash pop --index; then
-        printf "${RED}>> Conflicts detected while applying stash. Resolving by keeping pulled versions for conflicted files...${NC}\n"
-        git diff --name-only --diff-filter=U --relative | while IFS= read -r conflicted_file; do
-            printf ">> Resolving conflict in '$conflicted_file': keeping version from pull.\n"
-            git checkout --ours -- "$conflicted_file"
-            git add -- "$conflicted_file"
-        done
-        printf ">> Dropping the stash after conflict resolution...\n"
-        git stash drop stash@{0}
-        printf "${GREEN}>> Conflicts resolved. Stashed changes to conflicting files discarded. Other stashed changes applied.${NC}\n"
-    else
-        printf "${GREEN}>> Stashed changes reapplied successfully.${NC}\n"
-    fi
-else
-    printf ">> No stashed changes to reapply (as none were made by this script run).\n"
-fi
 
 # Set permissions for MeloTTS
 sudo chown -R dwemer:dwemer /home/dwemer/MeloTTS
@@ -151,37 +97,10 @@ if [ "$CURRENT_REMOTE" != "$TARGET_REMOTE" ]; then
     git remote set-url origin $TARGET_REMOTE
 fi
 
-stashed_something=false
-# Check if there are any changes (modified, staged, or untracked)
-if ! git diff --quiet HEAD || ! git diff --quiet --cached || ! test -z "$(git ls-files --others --exclude-standard)"; then
-    printf ">> Local changes detected. Stashing (including untracked files)...\n"
-    git stash push -u -m "Auto-stash before update_gws pull"
-    stashed_something=true
-else
-    printf ">> No local changes to stash.\n"
-fi
-
+printf ">> Resetting repository...\n"
+git reset --hard HEAD
 printf ">> Pulling latest changes...\n"
 git pull
-
-if [ "$stashed_something" = true ]; then
-    printf ">> Attempting to reapply stashed changes...\n"
-    if ! git stash pop --index; then
-        printf "${RED}>> Conflicts detected while applying stash. Resolving by keeping pulled versions for conflicted files...${NC}\n"
-        git diff --name-only --diff-filter=U --relative | while IFS= read -r conflicted_file; do
-            printf ">> Resolving conflict in '$conflicted_file': keeping version from pull.\n"
-            git checkout --ours -- "$conflicted_file"
-            git add -- "$conflicted_file"
-        done
-        printf ">> Dropping the stash after conflict resolution...\n"
-        git stash drop stash@{0}
-        printf "${GREEN}>> Conflicts resolved. Stashed changes to conflicting files discarded. Other stashed changes applied.${NC}\n"
-    else
-        printf "${GREEN}>> Stashed changes reapplied successfully.${NC}\n"
-    fi
-else
-    printf ">> No stashed changes to reapply (as none were made by this script run).\n"
-fi
 
 # Set permissions for LocalWhisper
 sudo chown -R dwemer:dwemer /home/dwemer/remote-faster-whisper
@@ -199,37 +118,10 @@ if [ -d "speakers" ]; then
     cp -r speakers speakers.backup
 fi
 
-stashed_something=false
-# Check if there are any changes (modified, staged, or untracked)
-if ! git diff --quiet HEAD || ! git diff --quiet --cached || ! test -z "$(git ls-files --others --exclude-standard)"; then
-    printf ">> Local changes detected. Stashing (including untracked files)...\n"
-    git stash push -u -m "Auto-stash before update_gws pull"
-    stashed_something=true
-else
-    printf ">> No local changes to stash.\n"
-fi
-
+printf ">> Resetting repository...\n"
+git reset --hard HEAD
 printf ">> Pulling latest changes...\n"
 git pull
-
-if [ "$stashed_something" = true ]; then
-    printf ">> Attempting to reapply stashed changes...\n"
-    if ! git stash pop --index; then
-        printf "${RED}>> Conflicts detected while applying stash. Resolving by keeping pulled versions for conflicted files...${NC}\n"
-        git diff --name-only --diff-filter=U --relative | while IFS= read -r conflicted_file; do
-            printf ">> Resolving conflict in '$conflicted_file': keeping version from pull.\n"
-            git checkout --ours -- "$conflicted_file"
-            git add -- "$conflicted_file"
-        done
-        printf ">> Dropping the stash after conflict resolution...\n"
-        git stash drop stash@{0}
-        printf "${GREEN}>> Conflicts resolved. Stashed changes to conflicting files discarded. Other stashed changes applied.${NC}\n"
-    else
-        printf "${GREEN}>> Stashed changes reapplied successfully.${NC}\n"
-    fi
-else
-    printf ">> No stashed changes to reapply (as none were made by this script run).\n"
-fi
 
 # Restore speakers folder if backup exists
 if [ -d "speakers.backup" ]; then
