@@ -66,7 +66,7 @@ git pull
 # Set permissions for minime-t5
 sudo chown -R dwemer:dwemer /home/dwemer/minime-t5
 sudo chmod -R 755 /home/dwemer/minime-t5
-printf "${GREEN}[SUCCESS] MiniMe updated successfully${NC}\n"
+printf "${GREEN}[SUCCESS] MiniMe & TXT2VEC updated successfully${NC}\n"
 
 # MeloTTS update
 cd /home/dwemer/MeloTTS
