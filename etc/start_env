@@ -37,13 +37,19 @@ echo "Starting Apache/PHP/PGSQL Server"
 /etc/init.d/apache2 restart &>/dev/null
 /etc/init.d/postgresql restart
 
+# Create symbolic link for Apache error log if it doesn't exist
+if [ ! -e "/var/www/html/HerikaServer/log/apache_error.log" ]; then
+  mkdir -p /var/www/html/HerikaServer/log/
+  ln -sf /var/log/apache2/error.log /var/www/html/HerikaServer/log/apache_error.log
+fi
+
 if [ -f  "/home/dwemer/minime-t5/start.sh" ]
 then
 	echo -ne  "Starting Minime-T5 service "
 	su dwemer -c /home/dwemer/minime-t5/start.sh
 	check_port 8082
 else
-	echo "Skipping Minime-T5 service (not enabled)"
+	echo "Skipping Minime-T5/TXT2VEC service (not enabled)"
 	L_MINIME=1
 fi
 
@@ -107,7 +113,7 @@ POLINT=1
 DwemerDistro Local IP Address: $ipaddress
 CHIM WebServer URL: http://$ipaddress:8081
 
-Installed Components:
+Running Components:
 EOF
 
 if [ -z "$L_MINIME" ]; then
@@ -140,5 +146,5 @@ killall -15 -u dwemer
 /etc/init.d/apache2 stop
 /etc/init.d/postgresql stop
 
-echo "You can now close this window. Use Tools/Force Stop Distro.bat to fully shutdown DwemerDistro"
+echo "DwemerDistro has stopped running"
 
