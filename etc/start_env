@@ -45,7 +45,7 @@ fi
 
 if [ -f  "/home/dwemer/minime-t5/start.sh" ]
 then
-	echo -ne  "Starting Minime-T5 service "
+	echo -ne  "Starting Minime-T5/TXT2VEC service "
 	su dwemer -c /home/dwemer/minime-t5/start.sh
 	check_port 8082
 else
@@ -117,7 +117,7 @@ Running Components:
 EOF
 
 if [ -z "$L_MINIME" ]; then
-	echo Minime-T5 API: http://$ipaddress:8082
+	echo Minime-T5/TXT2VEC API: http://$ipaddress:8082
 fi
 
 if [ -z "$L_WHISPER" ]; then
