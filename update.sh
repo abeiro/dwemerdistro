@@ -43,11 +43,22 @@ else
 fi
 
 printf ">> Copying configuration files to /etc...\n"
-cp /home/dwemer/dwemerdistro/etc/* /etc/ 2>/dev/null
+find /home/dwemer/dwemerdistro/etc/ -type f ! -name "php.ini" -exec cp {} /etc/ \; 2>/dev/null
 if [ $? -eq 0 ]; then
     printf "${GREEN}[SUCCESS] Configuration files successfully copied to /etc/${NC}\n"
 else
     printf "${RED}[ERROR] Error copying configuration files to /etc/${NC}\n"
+    exit 1
+fi
+
+print_header "UPDATING PHP CONFIGURATION"
+
+printf ">> Updating PHP Apache configuration...\n"
+cp /home/dwemer/dwemerdistro/etc/php.ini /etc/php/8.2/apache2/php.ini 2>/dev/null
+if [ $? -eq 0 ]; then
+    printf "${GREEN}[SUCCESS] PHP configuration updated${NC}\n"
+else
+    printf "${RED}[ERROR] Error updating PHP configuration${NC}\n"
     exit 1
 fi
 
