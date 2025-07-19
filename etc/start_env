@@ -91,7 +91,6 @@ else
 	L_XTTSV2=1
 fi
 # Save IPs to PostgreSQL database after all services are started
-echo "Saving network configuration to database..."
 export PGPASSWORD=dwemer
 
 # Wait for PostgreSQL to be fully ready
@@ -105,25 +104,23 @@ if [ "$psql_result" = "1" ]; then
     CREATE TABLE IF NOT EXISTS conf_opts (
         id VARCHAR(255) PRIMARY KEY,
         value TEXT
-    );" 2>/dev/null
+    );" &>/dev/null
     
     # Insert/Update WSL IP
     psql -h localhost -U dwemer -d dwemer -c "
     INSERT INTO conf_opts (id, value) 
     VALUES ('Network/WSL_IP', '$wsl_ip') 
     ON CONFLICT (id) 
-    DO UPDATE SET value = EXCLUDED.value;" 2>/dev/null
+    DO UPDATE SET value = EXCLUDED.value;" &>/dev/null
     
     # Insert/Update Windows Host IP  
     psql -h localhost -U dwemer -d dwemer -c "
     INSERT INTO conf_opts (id, value) 
     VALUES ('Network/HOST_IP', '$host_ip') 
     ON CONFLICT (id) 
-    DO UPDATE SET value = EXCLUDED.value;" 2>/dev/null
+    DO UPDATE SET value = EXCLUDED.value;" &>/dev/null
     
     echo "Network IPs saved to database successfully."
-else
-    echo "Warning: Could not connect to database to save network configuration."
 fi
 
 unset PGPASSWORD
