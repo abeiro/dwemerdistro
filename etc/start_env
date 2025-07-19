@@ -33,6 +33,8 @@ check_port() {
 wsl_ip=$(/usr/local/bin/get_ip --wsl)
 host_ip=$(/usr/local/bin/get_ip --host)
 
+
+
 # Start Apache/PHP server
 echo "Starting Apache/PHP/PGSQL Server"
 /etc/init.d/apache2 restart &>/dev/null
@@ -88,6 +90,44 @@ else
 	echo  "Skipping CHIM XTTS server (not enabled)"
 	L_XTTSV2=1
 fi
+# Save IPs to PostgreSQL database after all services are started
+echo "Saving network configuration to database..."
+export PGPASSWORD=dwemer
+
+# Wait for PostgreSQL to be fully ready
+sleep 2
+
+# Check if database connection works and create/update IP records
+psql_result=$(psql -h localhost -U dwemer -d dwemer -t -c "SELECT 1;" 2>/dev/null | tr -d ' \n')
+if [ "$psql_result" = "1" ]; then
+    # Create conf_opts table if it doesn't exist
+    psql -h localhost -U dwemer -d dwemer -c "
+    CREATE TABLE IF NOT EXISTS conf_opts (
+        id VARCHAR(255) PRIMARY KEY,
+        value TEXT
+    );" 2>/dev/null
+    
+    # Insert/Update WSL IP
+    psql -h localhost -U dwemer -d dwemer -c "
+    INSERT INTO conf_opts (id, value) 
+    VALUES ('Network/WSL_IP', '$wsl_ip') 
+    ON CONFLICT (id) 
+    DO UPDATE SET value = EXCLUDED.value;" 2>/dev/null
+    
+    # Insert/Update Windows Host IP  
+    psql -h localhost -U dwemer -d dwemer -c "
+    INSERT INTO conf_opts (id, value) 
+    VALUES ('Network/HOST_IP', '$host_ip') 
+    ON CONFLICT (id) 
+    DO UPDATE SET value = EXCLUDED.value;" 2>/dev/null
+    
+    echo "Network IPs saved to database successfully."
+else
+    echo "Warning: Could not connect to database to save network configuration."
+fi
+
+unset PGPASSWORD
+
 ipaddress=$(/usr/local/bin/get_ip)
 cat << EOF
 =======================================
