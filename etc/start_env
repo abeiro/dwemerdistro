@@ -91,7 +91,7 @@ fi
 ipaddress=$(/usr/local/bin/get_ip)
 cat << EOF
 =======================================
-Network Information:
+AIAgent.ini Network Settings:
 Windows Host IP: $host_ip 
 WSL2 Internal IP: $wsl_ip 
 CHIM WebServer: http://$ipaddress:8081
