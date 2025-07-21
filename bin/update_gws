@@ -107,6 +107,11 @@ sudo chown -R dwemer:dwemer /home/dwemer/remote-faster-whisper
 sudo chmod -R 755 /home/dwemer/remote-faster-whisper
 printf "${GREEN}[SUCCESS] LocalWhisper updated successfully${NC}\n"
 
+# Set permissions for Piper-TTS
+sudo chown -R dwemer:dwemer /home/dwemer/piper
+sudo chmod -R 755 /home/dwemer/piper
+printf "${GREEN}[SUCCESS] Piper-TTS updated successfully${NC}\n"
+
 # XTTSv2 server update
 cd /home/dwemer/xtts-api-server
 BRANCH=$(git branch --show-current)

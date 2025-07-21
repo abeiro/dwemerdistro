@@ -73,6 +73,15 @@ else
 	L_MELOTTS=1
 fi
 
+if [ -f  "/home/dwemer/piper/start.sh" ]; then
+	echo -ne  "Starting Piper-TTS "
+	su dwemer -c /home/dwemer/piper/start.sh
+	check_port 5000
+else
+	echo "Skipping Piper-TTS (not enabled)"
+	L_PIPERTTS=1
+fi
+
 if [ -f  "/home/dwemer/remote-faster-whisper/config.yaml" ]; then
 	echo -ne  "Starting LocalWhisper Server "
 	su dwemer -c "/home/dwemer/remote-faster-whisper/start.sh"
@@ -154,6 +163,10 @@ fi
 
 if [ -z "$L_MELOTTS" ]; then
 	echo MelotTTS API: http://$ipaddress:8084
+fi
+
+if [ -z "$L_PIPERTTS" ]; then
+	echo Piper-TTS API: http://$ipaddress:5000
 fi
 
 explorer.exe http://$ipaddress:8081/HerikaServer/ui/index.php &>/dev/null&
