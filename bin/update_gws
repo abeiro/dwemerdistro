@@ -107,10 +107,43 @@ sudo chown -R dwemer:dwemer /home/dwemer/remote-faster-whisper
 sudo chmod -R 755 /home/dwemer/remote-faster-whisper
 printf "${GREEN}[SUCCESS] LocalWhisper updated successfully${NC}\n"
 
-# Set permissions for Piper-TTS
+# Piper TTS update/setup
+# Check if piper directory exists and has README.md
+if [ ! -d "/home/dwemer/piper" ] || [ ! -f "/home/dwemer/piper/README.md" ]; then
+    print_header "SETTING UP PIPER TTS"
+    print_warning "Piper TTS not found or incomplete. Cloning repository..."
+    
+    # Create directory if it doesn't exist
+    if [ ! -d "/home/dwemer/piper" ]; then
+        mkdir -p /home/dwemer/piper
+    fi
+    
+    cd /home/dwemer
+    # Remove directory if it exists but doesn't have README.md (incomplete clone)
+    if [ -d "piper" ] && [ ! -f "piper/README.md" ]; then
+        rm -rf piper
+    fi
+    
+    printf ">> Cloning Piper TTS repository...\n"
+    git clone -b main https://github.com/Dwemer-Dynamics/Piper-TTS-CHIM.git piper
+    
+    cd /home/dwemer/piper
+else
+    # Directory exists with README.md, so update it
+    cd /home/dwemer/piper
+    BRANCH=$(git branch --show-current)
+    print_header "UPDATING PIPER TTS" "$BRANCH"
+    
+    printf ">> Resetting repository...\n"
+    git reset --hard HEAD
+    printf ">> Pulling latest changes...\n"
+    git pull
+fi
+
+# Set permissions for Piper TTS
 sudo chown -R dwemer:dwemer /home/dwemer/piper
 sudo chmod -R 755 /home/dwemer/piper
-printf "${GREEN}[SUCCESS] Piper-TTS updated successfully${NC}\n"
+printf "${GREEN}[SUCCESS] Piper TTS updated successfully${NC}\n"
 
 # XTTSv2 server update
 cd /home/dwemer/xtts-api-server
@@ -139,46 +172,6 @@ fi
 sudo chown -R dwemer:dwemer /home/dwemer/xtts-api-server
 sudo chmod -R 755 /home/dwemer/xtts-api-server
 printf "${GREEN}[SUCCESS] CHIM XTTS updated successfully${NC}\n"
-
-# Piper TTS update/setup
-print_header "UPDATING/SETTING UP PIPER TTS"
-
-# Check if piper directory exists and has README.md
-if [ ! -d "/home/dwemer/piper" ] || [ ! -f "/home/dwemer/piper/README.md" ]; then
-    print_warning "Piper TTS not found or incomplete. Cloning repository..."
-    
-    # Create directory if it doesn't exist
-    if [ ! -d "/home/dwemer/piper" ]; then
-        mkdir -p /home/dwemer/piper
-    fi
-    
-    cd /home/dwemer
-    # Remove directory if it exists but doesn't have README.md (incomplete clone)
-    if [ -d "piper" ] && [ ! -f "piper/README.md" ]; then
-        rm -rf piper
-    fi
-    
-    printf ">> Cloning Piper TTS repository...\n"
-    git clone -b main https://github.com/Dwemer-Dynamics/Piper-TTS-CHIM.git piper
-    
-    cd /home/dwemer/piper
-    printf "${GREEN}[SUCCESS] Piper TTS cloned successfully${NC}\n"
-else
-    # Directory exists with README.md, so update it
-    cd /home/dwemer/piper
-    BRANCH=$(git branch --show-current)
-    print_header "UPDATING PIPER TTS" "$BRANCH"
-    
-    printf ">> Resetting repository...\n"
-    git reset --hard HEAD
-    printf ">> Pulling latest changes...\n"
-    git pull
-    printf "${GREEN}[SUCCESS] Piper TTS updated successfully${NC}\n"
-fi
-
-# Set permissions for Piper TTS
-sudo chown -R dwemer:dwemer /home/dwemer/piper
-sudo chmod -R 755 /home/dwemer/piper
 
 # System permission updates
 print_header "RUNNING SYSTEM PERMISSION UPDATES"
