@@ -135,9 +135,9 @@ else
     print_header "UPDATING PIPER TTS" "$BRANCH"
     
     printf ">> Resetting repository...\n"
-    git reset --hard HEAD
+    git reset --hard HEAD --quiet
     printf ">> Pulling latest changes...\n"
-    git pull
+    git pull --quiet
 fi
 
 # Set permissions for Piper TTS
