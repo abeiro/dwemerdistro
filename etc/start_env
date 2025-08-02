@@ -73,7 +73,7 @@ else
 	L_MELOTTS=1
 fi
 
-if [ -f "/home/dwemer/piper/cuda-keyring_1.1-1_all.deb"]; then 
+if [ -f "/home/dwemer/piper/cuda-keyring_1.1-1_all.deb" ]; then 
 
     if [ -f  "/home/dwemer/piper/start.sh" ]; then
         echo -ne  "Starting Piper-TTS "
