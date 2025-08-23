@@ -4,6 +4,29 @@ echo "This will install the needed packages to run CUDA"
 echo "Press Enter to continue"
 read
 
+# Try to install NVIDIA CUDA repo keyring (for latest CUDA packages)
+# Safe to skip if unavailable or already installed
+. /etc/os-release
+case "${ID}-${VERSION_CODENAME}" in
+    ubuntu-jammy)  NV_REPO_PATH="ubuntu2204" ;;
+    ubuntu-noble)  NV_REPO_PATH="ubuntu2404" ;;
+    ubuntu-focal)  NV_REPO_PATH="ubuntu2004" ;;
+    debian-bookworm) NV_REPO_PATH="debian12" ;;
+    debian-bullseye) NV_REPO_PATH="debian11" ;;
+    *) NV_REPO_PATH="" ;;
+esac
+
+if ! dpkg -s cuda-keyring &>/dev/null; then
+    if [ -n "$NV_REPO_PATH" ]; then
+        echo "Adding NVIDIA CUDA repository keyring for $ID $VERSION_CODENAME"
+        TMP_DEB="/tmp/cuda-keyring_1.1-1_all.deb"
+        curl -fsSL "https://developer.download.nvidia.com/compute/cuda/repos/${NV_REPO_PATH}/x86_64/cuda-keyring_1.1-1_all.deb" -o "$TMP_DEB" && \
+        dpkg -i "$TMP_DEB" && rm -f "$TMP_DEB" || echo "Skipping cuda-keyring (download/install failed)"
+    else
+        echo "Skipping cuda-keyring (unsupported distro: ${ID}-${VERSION_CODENAME})"
+    fi
+fi
+
 apt-get update 
 apt-get install -y  $(cat /etc/ddistro-full-packages.txt)
 
