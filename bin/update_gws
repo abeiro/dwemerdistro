@@ -179,6 +179,9 @@ print_header "RUNNING SYSTEM PERMISSION UPDATES"
 sudo /usr/local/bin/update_perms
 printf "${GREEN}[SUCCESS] System permissions updated${NC}\n"
 
+# Install netcat, needed for service daemon
+sudo apt-get update && sudo apt-get -y install netcat-openbsd
+
 # Final message
 printf "\n${BOLD}=======================================================${NC}\n"
 printf "${BOLD}${GREEN}                ALL UPDATES COMPLETED!               ${NC}\n"
