@@ -36,6 +36,8 @@ print_header "UPDATING SYSTEM FILES"
 printf ">> Copying scripts to /usr/local/bin...\n"
 cp /home/dwemer/dwemerdistro/bin/* /usr/local/bin/ 2>/dev/null
 if [ $? -eq 0 ]; then
+    # Set executable permissions for all scripts
+    chmod +x /usr/local/bin/* 2>/dev/null
     printf "${GREEN}[SUCCESS] Scripts successfully copied to /usr/local/bin/${NC}\n"
 else
     printf "${RED}[ERROR] Error copying scripts to /usr/local/bin/${NC}\n"

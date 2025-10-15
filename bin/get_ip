@@ -1,4 +1,26 @@
 #!/bin/bash
 
-/sbin/ifconfig |grep inet|grep -v inet6|grep -v 127.0.0.1|grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}'|head -1
+# Enhanced IP detection script
+# Usage: get_ip [--host] [--wsl]
+# Default: returns WSL2 IP (backward compatible)
+# --host: returns Windows host IP
+# --wsl: explicitly returns WSL2 IP
+
+case "$1" in
+    --host)
+        # Get Windows host IP (default gateway from WSL2)
+        ip route show default | awk '{print $3}' | head -1 2>/dev/null || \
+        grep nameserver /etc/resolv.conf | awk '{print $2}' | head -1
+        ;;
+    --wsl|"")
+        # Get WSL2 IP (original behavior)
+        /sbin/ifconfig |grep inet|grep -v inet6|grep -v 127.0.0.1|grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}'|head -1
+        ;;
+    *)
+        echo "Usage: get_ip [--host|--wsl]"
+        echo "  --host : Get Windows host IP address"
+        echo "  --wsl  : Get WSL2 IP address (default)"
+        exit 1
+        ;;
+esac
 

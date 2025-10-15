@@ -3,10 +3,8 @@
 /usr/local/bin/print_logo
 
 # Clean tmp
-
 find /tmp -type f -mtime +7 -delete 
 find /tmp/ -type d -mtime +7 -exec \rm -fr {} \; &>/dev/null
-
 
 check_port() {
     local port=$1
@@ -31,6 +29,9 @@ check_port() {
     return 1
 }
 
+# Get both WSL2 and Windows host IPs using enhanced get_ip script
+wsl_ip=$(/usr/local/bin/get_ip --wsl)
+host_ip=$(/usr/local/bin/get_ip --host)
 
 # Start Apache/PHP server
 echo "Starting Apache/PHP/PGSQL Server"
@@ -43,8 +44,7 @@ if [ ! -e "/var/www/html/HerikaServer/log/apache_error.log" ]; then
   ln -sf /var/log/apache2/error.log /var/www/html/HerikaServer/log/apache_error.log
 fi
 
-if [ -f  "/home/dwemer/minime-t5/start.sh" ]
-then
+if [ -f  "/home/dwemer/minime-t5/start.sh" ]; then
 	echo -ne  "Starting Minime-T5/TXT2VEC service "
 	su dwemer -c /home/dwemer/minime-t5/start.sh
 	check_port 8082
@@ -53,31 +53,25 @@ else
 	L_MINIME=1
 fi
 
-if [ -f  "/home/dwemer/mimic3/start.sh" ]
-then
+if [ -f  "/home/dwemer/mimic3/start.sh" ]; then
 	echo -ne  "Starting Mimic3 TTS "
 	su dwemer -c /home/dwemer/mimic3/start.sh
 	check_port 59125
 else
 	echo "Skipping Mimic3 TTS (not enabled)"
 	L_MIMIC=1
-
 fi
 
-if [ -f  "/home/dwemer/MeloTTS/start.sh" ]
-then
+if [ -f  "/home/dwemer/MeloTTS/start.sh" ]; then
 	echo -ne  "Starting MeloTTS "
 	su dwemer -c /home/dwemer/MeloTTS/start.sh
 	check_port 8084
 else
 	echo "Skipping MeloTTS (not enabled)"
 	L_MELOTTS=1
-
 fi
 
-
-if [ -f  "/home/dwemer/remote-faster-whisper/config.yaml" ]
-then
+if [ -f  "/home/dwemer/remote-faster-whisper/config.yaml" ]; then
 	echo -ne  "Starting LocalWhisper Server "
 	su dwemer -c "/home/dwemer/remote-faster-whisper/start.sh"
 	check_port 9876
@@ -86,32 +80,21 @@ else
 	echo  "Skipping LocalWhisper Server (not enabled)"
 fi
 
-if [ -f  "/home/dwemer/xtts-api-server/start.sh" ]
-then
+if [ -f  "/home/dwemer/xtts-api-server/start.sh" ]; then
 	echo -ne  "Starting CHIM XTTS server"
 	su dwemer -c "/home/dwemer/xtts-api-server/start.sh"
 	check_port 8020
 else
 	echo  "Skipping CHIM XTTS server (not enabled)"
 	L_XTTSV2=1
-
 fi
-
-
 ipaddress=$(/usr/local/bin/get_ip)
-
 cat << EOF
 =======================================
-Download AIAgent.ini under Server Actions!
-AIAgent.ini Network Settings:
-----------------------------
-SERVER=$ipaddress
-PORT=8081
-PATH=/HerikaServer/comm.php
-POLINT=1
-----------------------------
-DwemerDistro Local IP Address: $ipaddress
-CHIM WebServer URL: http://$ipaddress:8081
+Network Information:
+Windows Host IP: $host_ip 
+WSL2 Internal IP: $wsl_ip 
+CHIM WebServer: http://$ipaddress:8081
 
 Running Components:
 EOF
