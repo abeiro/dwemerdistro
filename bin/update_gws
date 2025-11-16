@@ -174,7 +174,7 @@ sudo chmod -R 755 /home/dwemer/xtts-api-server
 printf "${GREEN}[SUCCESS] CHIM XTTS updated successfully${NC}\n"
 
 # Parakeet update
-if [ ! -d cd /home/dwemer/parakeet-api-server ];then
+if [ ! -d /home/dwemer/parakeet-api-server ];then
     cd /home/dwemer/
     git clone https://github.com/Dwemer-Dynamics/parakeet-api-server
 fi
