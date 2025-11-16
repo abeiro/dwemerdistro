@@ -16,4 +16,4 @@
 
 /home/dwemer/piper/conf.sh
 
-
+[ -f /home/dwemer/parakeet-api-server/conf.sh ] && /home/dwemer/parakeet-api-server/conf.sh
