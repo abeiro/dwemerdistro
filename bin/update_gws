@@ -173,6 +173,35 @@ sudo chown -R dwemer:dwemer /home/dwemer/xtts-api-server
 sudo chmod -R 755 /home/dwemer/xtts-api-server
 printf "${GREEN}[SUCCESS] CHIM XTTS updated successfully${NC}\n"
 
+# Parakeet update
+if [ ! -d cd /home/dwemer/parakeet-api-server ];then
+    cd /home/dwemer/
+    git clone https://github.com/Dwemer-Dynamics/parakeet-api-server
+fi
+cd /home/dwemer/parakeet-api-server
+BRANCH=$(git branch --show-current)
+print_header "UPDATING PARAKEET" "$BRANCH"
+
+# Check current remote URL
+CURRENT_REMOTE=$(git config --get remote.origin.url)
+TARGET_REMOTE="https://github.com/Dwemer-Dynamics/parakeet-api-server"
+
+# Set the correct remote if needed
+if [ "$CURRENT_REMOTE" != "$TARGET_REMOTE" ]; then
+    print_warning "Setting remote to $TARGET_REMOTE"
+    git remote set-url origin $TARGET_REMOTE
+fi
+
+printf ">> Resetting repository...\n"
+git reset --hard HEAD
+printf ">> Pulling latest changes...\n"
+git pull
+
+# Set permissions for LocalWhisper
+sudo chown -R dwemer:dwemer /home/dwemer/parakeet-api-server
+sudo chmod -R 755 /home/dwemer/parakeet-api-server
+printf "${GREEN}[SUCCESS] Parakeet updated successfully${NC}\n"
+
 # System permission updates
 print_header "RUNNING SYSTEM PERMISSION UPDATES"
 
