@@ -73,6 +73,17 @@ else
 	L_MELOTTS=1
 fi
 
+if [ -f /home/dwemer/parakeet-api-server/start.sh ];then
+	echo -ne  "Starting Parakeet "
+	su dwemer -c /home/dwemer/parakeet-api-server/start.sh
+	check_port 8022
+else
+	echo "Skipping Parakeet (not enabled)"
+	L_PARAKEET=1
+fi
+
+
+
 if [ -f "/home/dwemer/piper/cuda-keyring_1.1-1_all.deb" ]; then 
 
     if [ -f  "/home/dwemer/piper/start.sh" ]; then
@@ -173,6 +184,10 @@ fi
 
 if [ -z "$L_PIPERTTS" ]; then
 	echo Piper-TTS API: http://$ipaddress:5000
+fi
+
+if [ -z "$L_PARAKEET" ]; then
+	echo Parakeet API: http://$ipaddress:8022
 fi
 
 explorer.exe http://$ipaddress:8081/HerikaServer/ui/index.php &>/dev/null&
