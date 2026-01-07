@@ -202,16 +202,14 @@ sudo chown -R dwemer:dwemer /home/dwemer/parakeet-api-server
 sudo chmod -R 755 /home/dwemer/parakeet-api-server
 printf "${GREEN}[SUCCESS] Parakeet updated successfully${NC}\n"
 
-# Chatterbox
-
-# Chatterbox update
+# Chatterbox update/install
 if [ ! -d /home/dwemer/chatterbox ];then
     cd /home/dwemer/
     git clone https://github.com/Dwemer-Dynamics/chatterbox
 fi
 cd /home/dwemer/chatterbox
 BRANCH=$(git branch --show-current)
-print_header "UPDATING PARAKEET" "$BRANCH"
+print_header "UPDATING CHATTERBOX" "$BRANCH"
 
 # Check current remote URL
 CURRENT_REMOTE=$(git config --get remote.origin.url)
