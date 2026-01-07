@@ -202,6 +202,37 @@ sudo chown -R dwemer:dwemer /home/dwemer/parakeet-api-server
 sudo chmod -R 755 /home/dwemer/parakeet-api-server
 printf "${GREEN}[SUCCESS] Parakeet updated successfully${NC}\n"
 
+# Chatterbox
+
+# Chatterbox update
+if [ ! -d /home/dwemer/chatterbox ];then
+    cd /home/dwemer/
+    git clone https://github.com/Dwemer-Dynamics/chatterbox
+fi
+cd /home/dwemer/chatterbox
+BRANCH=$(git branch --show-current)
+print_header "UPDATING PARAKEET" "$BRANCH"
+
+# Check current remote URL
+CURRENT_REMOTE=$(git config --get remote.origin.url)
+TARGET_REMOTE="https://github.com/Dwemer-Dynamics/chatterbox"
+
+# Set the correct remote if needed
+if [ "$CURRENT_REMOTE" != "$TARGET_REMOTE" ]; then
+    print_warning "Setting remote to $TARGET_REMOTE"
+    git remote set-url origin $TARGET_REMOTE
+fi
+
+printf ">> Resetting repository...\n"
+git reset --hard HEAD
+printf ">> Pulling latest changes...\n"
+git pull
+
+# Set permissions for LocalWhisper
+sudo chown -R dwemer:dwemer /home/dwemer/chatterbox
+sudo chmod -R 755 /home/dwemer/chatterbox
+printf "${GREEN}[SUCCESS] Chatterbox updated successfully${NC}\n"
+
 # System permission updates
 print_header "RUNNING SYSTEM PERMISSION UPDATES"
 
