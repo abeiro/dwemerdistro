@@ -17,3 +17,4 @@
 /home/dwemer/piper/conf.sh
 
 [ -f /home/dwemer/parakeet-api-server/conf.sh ] && /home/dwemer/parakeet-api-server/conf.sh
+[ -f /home/dwemer/chatterbox/conf.sh ] && /home/dwemer/chatterbox/conf.sh
