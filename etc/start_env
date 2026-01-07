@@ -82,6 +82,14 @@ else
 	L_PARAKEET=1
 fi
 
+if [ -f /home/dwemer/chatterbox/start.sh ];then
+	echo -ne  "Starting Chatterbox"
+	su dwemer -c /home/dwemer/chatterbox/start.sh
+	check_port 8022
+else
+	echo "Skipping Chatterbox (not enabled)"
+	L_CHATTERBOX=1
+fi
 
 
 if [ -f "/home/dwemer/piper/cuda-keyring_1.1-1_all.deb" ]; then 
@@ -190,6 +198,9 @@ if [ -z "$L_PARAKEET" ]; then
 	echo Parakeet API: http://$ipaddress:8022
 fi
 
+if [ -z "$L_CHATTERBOX" ]; then
+	echo Chatterbox API: http://$ipaddress:8020
+fi
 explorer.exe http://$ipaddress:8081/HerikaServer/ui/index.php &>/dev/null&
 
 echo "Press Enter to shutdown DwemerDistro"
