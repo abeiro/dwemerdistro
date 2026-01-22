@@ -2,6 +2,11 @@
 
 /usr/local/bin/print_logo
 
+# Load CUDA configuration if it exists (will not be overwritten by updates)
+if [ -f "/home/dwemer/.cuda_config" ]; then
+    source /home/dwemer/.cuda_config
+fi
+
 # Clean tmp
 find /tmp -type f -mtime +7 -delete 
 find /tmp/ -type d -mtime +7 -exec \rm -fr {} \; &>/dev/null
