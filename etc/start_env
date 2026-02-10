@@ -99,7 +99,7 @@ fi
 if [ -f /home/dwemer/pocket-tts/start.sh ];then
 	echo -ne  "Starting pocket-tts"
 	su dwemer -c /home/dwemer/pocket-tts/start.sh
-	check_port 8022
+	check_port 8020
 else
 	echo "Skipping pocket-tts (not enabled)"
 	L_POCKETTTS=1
