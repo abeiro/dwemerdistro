@@ -197,7 +197,7 @@ git reset --hard HEAD
 printf ">> Pulling latest changes...\n"
 git pull
 
-# Set permissions for LocalWhisper
+# Set permissions for Parakeet
 sudo chown -R dwemer:dwemer /home/dwemer/parakeet-api-server
 sudo chmod -R 755 /home/dwemer/parakeet-api-server
 printf "${GREEN}[SUCCESS] Parakeet updated successfully${NC}\n"
@@ -226,10 +226,39 @@ git reset --hard HEAD
 printf ">> Pulling latest changes...\n"
 git pull
 
-# Set permissions for LocalWhisper
+# Set permissions for CHATTERBOX
 sudo chown -R dwemer:dwemer /home/dwemer/chatterbox
 sudo chmod -R 755 /home/dwemer/chatterbox
 printf "${GREEN}[SUCCESS] Chatterbox updated successfully${NC}\n"
+
+# PocketTTS update
+if [ ! -d /home/dwemer/pocket-tts ];then
+    cd /home/dwemer/
+    git clone https://github.com/Dwemer-Dynamics/pocket-tts
+fi
+cd /home/dwemer/pocket-tts
+BRANCH=$(git branch --show-current)
+print_header "UPDATING pocket-tts" "$BRANCH"
+
+# Check current remote URL
+CURRENT_REMOTE=$(git config --get remote.origin.url)
+TARGET_REMOTE="https://github.com/Dwemer-Dynamics/pocket-tts"
+
+# Set the correct remote if needed
+if [ "$CURRENT_REMOTE" != "$TARGET_REMOTE" ]; then
+    print_warning "Setting remote to $TARGET_REMOTE"
+    git remote set-url origin $TARGET_REMOTE
+fi
+
+printf ">> Resetting repository...\n"
+git reset --hard HEAD
+printf ">> Pulling latest changes...\n"
+git pull
+
+# Set permissions for LocalWhisper
+sudo chown -R dwemer:dwemer /home/dwemer/pocket-tts
+sudo chmod -R 755 /home/dwemer/pocket-tts
+printf "${GREEN}[SUCCESS] Parakeet updated successfully${NC}\n"
 
 # System permission updates
 print_header "RUNNING SYSTEM PERMISSION UPDATES"
