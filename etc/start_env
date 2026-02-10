@@ -96,6 +96,14 @@ else
 	L_CHATTERBOX=1
 fi
 
+if [ -f /home/dwemer/pocket-tts/start.sh ];then
+	echo -ne  "Starting pocket-tts"
+	su dwemer -c /home/dwemer/pocket-tts/start.sh
+	check_port 8022
+else
+	echo "Skipping pocket-tts (not enabled)"
+	L_POCKETTTS=1
+fi
 
 if [ -f "/home/dwemer/piper/cuda-keyring_1.1-1_all.deb" ]; then 
 
@@ -206,6 +214,11 @@ fi
 if [ -z "$L_CHATTERBOX" ]; then
 	echo Chatterbox API: http://$ipaddress:8020
 fi
+
+if [ -z "$L_POCKETTTS" ]; then
+	echo PockeTTS API: http://$ipaddress:8020
+fi
+
 explorer.exe http://$ipaddress:8081/HerikaServer/ui/index.php &>/dev/null&
 
 echo "Press Enter to shutdown DwemerDistro"
