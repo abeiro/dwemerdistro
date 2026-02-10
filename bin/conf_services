@@ -18,3 +18,5 @@
 
 [ -f /home/dwemer/parakeet-api-server/conf.sh ] && /home/dwemer/parakeet-api-server/conf.sh
 [ -f /home/dwemer/chatterbox/conf.sh ] && /home/dwemer/chatterbox/conf.sh
+[ -f /home/dwemer/pocket-tts/conf.sh ] && /home/dwemer/pocket-tts/conf.sh
+
