@@ -281,9 +281,16 @@ if [ -d /home/dwemer/CHIM-MCP ]; then
     if [ -f "package.json" ]; then
         if command -v npm >/dev/null 2>&1; then
             printf ">> Installing dependencies...\n"
-            npm ci --production
+            if [ -f "package-lock.json" ]; then
+                npm ci
+            else
+                npm install
+            fi
             printf ">> Building TypeScript...\n"
             npm run build
+            if [ ! -f "dist/index.js" ]; then
+                printf "${RED}[ERROR] CHIM MCP build did not produce dist/index.js${NC}\n"
+            fi
         else
             printf "${RED}[WARNING] npm not found. Skipping MCP dependency install/build.${NC}\n"
             printf "${RED}[WARNING] Install nodejs and npm packages, then rerun update.${NC}\n"
