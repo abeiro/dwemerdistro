@@ -722,6 +722,8 @@ net-tools
 netbase
 nftables
 node-html5shiv
+nodejs
+npm
 nss-plugin-pem:amd64
 nvidia-alternative
 nvidia-installer-cleanup

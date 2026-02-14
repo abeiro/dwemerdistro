@@ -260,6 +260,42 @@ sudo chown -R dwemer:dwemer /home/dwemer/pocket-tts
 sudo chmod -R 755 /home/dwemer/pocket-tts
 printf "${GREEN}[SUCCESS] Parakeet updated successfully${NC}\n"
 
+# CHIM MCP Server update/install
+if [ ! -d /home/dwemer/CHIM-MCP ]; then
+    print_header "INSTALLING CHIM MCP SERVER"
+    cd /home/dwemer/
+    git clone https://github.com/Dwemer-Dynamics/CHIM-MCP.git
+fi
+
+if [ -d /home/dwemer/CHIM-MCP ]; then
+    cd /home/dwemer/CHIM-MCP
+    BRANCH=$(git branch --show-current)
+    print_header "UPDATING CHIM MCP SERVER" "$BRANCH"
+    
+    printf ">> Resetting repository...\n"
+    git reset --hard HEAD
+    printf ">> Pulling latest changes...\n"
+    git pull
+    
+    # Install/update npm dependencies and build
+    if [ -f "package.json" ]; then
+        if command -v npm >/dev/null 2>&1; then
+            printf ">> Installing dependencies...\n"
+            npm ci --production
+            printf ">> Building TypeScript...\n"
+            npm run build
+        else
+            printf "${RED}[WARNING] npm not found. Skipping MCP dependency install/build.${NC}\n"
+            printf "${RED}[WARNING] Install nodejs and npm packages, then rerun update.${NC}\n"
+        fi
+    fi
+    
+    # Set permissions
+    sudo chown -R dwemer:dwemer /home/dwemer/CHIM-MCP
+    sudo chmod -R 755 /home/dwemer/CHIM-MCP
+    printf "${GREEN}[SUCCESS] CHIM MCP Server updated successfully${NC}\n"
+fi
+
 # System permission updates
 print_header "RUNNING SYSTEM PERMISSION UPDATES"
 

@@ -137,6 +137,31 @@ else
 	echo  "Skipping CHIM XTTS server (not enabled)"
 	L_XTTSV2=1
 fi
+
+# Check if MCP is enabled (default: enabled if flag file missing)
+MCP_ENABLED=1
+if [ -f "/home/dwemer/.mcp_enabled" ]; then
+	MCP_ENABLED=$(cat /home/dwemer/.mcp_enabled 2>/dev/null || echo "1")
+fi
+
+if [ "$MCP_ENABLED" = "1" ] && [ -f "/home/dwemer/CHIM-MCP/start.sh" ]; then
+	echo -ne  "Starting CHIM MCP Server "
+	su dwemer -c /home/dwemer/CHIM-MCP/start.sh
+	check_port 3100
+elif [ "$MCP_ENABLED" = "1" ] && [ -f "/home/dwemer/chim-mcp-server/start.sh" ]; then
+	# Backward compatibility for older installs.
+	echo -ne  "Starting CHIM MCP Server (legacy path) "
+	su dwemer -c /home/dwemer/chim-mcp-server/start.sh
+	check_port 3100
+else
+	if [ "$MCP_ENABLED" != "1" ]; then
+		echo "Skipping CHIM MCP Server (disabled by user)"
+	else
+		echo "Skipping CHIM MCP Server (not enabled)"
+	fi
+	L_MCPSERVER=1
+fi
+
 # Save IPs to PostgreSQL database after all services are started
 export PGPASSWORD=dwemer
 
@@ -217,6 +242,10 @@ fi
 
 if [ -z "$L_POCKETTTS" ]; then
 	echo PockeTTS API: http://$ipaddress:8020
+fi
+
+if [ -z "$L_MCPSERVER" ]; then
+	echo CHIM MCP Server: http://$ipaddress:3100
 fi
 
 explorer.exe http://$ipaddress:8081/HerikaServer/ui/index.php &>/dev/null&
