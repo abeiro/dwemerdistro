@@ -268,39 +268,108 @@ if [ ! -d /home/dwemer/CHIM-MCP ]; then
 fi
 
 if [ -d /home/dwemer/CHIM-MCP ]; then
+    mcp_failed=0
     cd /home/dwemer/CHIM-MCP
     BRANCH=$(git branch --show-current)
     print_header "UPDATING CHIM MCP SERVER" "$BRANCH"
     
     printf ">> Resetting repository...\n"
-    git reset --hard HEAD
+    if ! git reset --hard HEAD; then
+        print_warning "CHIM MCP reset failed."
+        mcp_failed=1
+    fi
     printf ">> Pulling latest changes...\n"
-    git pull
+    if ! git pull; then
+        print_warning "CHIM MCP pull failed."
+        mcp_failed=1
+    fi
     
     # Install/update npm dependencies and build
     if [ -f "package.json" ]; then
-        if command -v npm >/dev/null 2>&1; then
-            printf ">> Installing dependencies...\n"
-            if [ -f "package-lock.json" ]; then
-                npm ci
+        refresh_node_paths() {
+            npm_path=$(command -v npm 2>/dev/null || true)
+            node_path=$(command -v node 2>/dev/null || true)
+        }
+
+        windows_node_toolchain_detected() {
+            [ -z "$npm_path" ] || [ -z "$node_path" ] || [[ "$npm_path" == /mnt/c/* ]] || [[ "$npm_path" == *.cmd ]] || [[ "$node_path" == /mnt/c/* ]] || [[ "$node_path" == *.exe ]]
+        }
+
+        refresh_node_paths
+        node_toolchain_ready=1
+
+        if windows_node_toolchain_detected; then
+            print_warning "CHIM MCP resolved missing/Windows npm-node inside WSL. Attempting Linux nodejs/npm install."
+            if ! echo $PASSWORD | sudo -S apt-get update || ! echo $PASSWORD | sudo -S apt-get -y install nodejs npm; then
+                print_warning "CHIM MCP could not auto-install Linux nodejs/npm."
+                node_toolchain_ready=0
+                mcp_failed=1
             else
-                npm install
+                refresh_node_paths
+                if windows_node_toolchain_detected; then
+                    print_warning "CHIM MCP still resolves to missing/Windows npm-node after install."
+                    print_warning "Ensure WSL PATH prefers /usr/bin for node/npm."
+                    node_toolchain_ready=0
+                    mcp_failed=1
+                fi
             fi
-            printf ">> Building TypeScript...\n"
-            npm run build
-            if [ ! -f "dist/index.js" ]; then
-                printf "${RED}[ERROR] CHIM MCP build did not produce dist/index.js${NC}\n"
-            fi
-        else
-            printf "${RED}[WARNING] npm not found. Skipping MCP dependency install/build.${NC}\n"
-            printf "${RED}[WARNING] Install nodejs and npm packages, then rerun update.${NC}\n"
         fi
+
+        if [ "$node_toolchain_ready" -eq 1 ]; then
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+            install_success=0
+            for attempt in 1 2; do
+                printf ">> Installing dependencies...\n"
+                if [ -f "package-lock.json" ]; then
+                    npm ci && install_success=1 && break
+                else
+                    npm install && install_success=1 && break
+                fi
+                if [ "$attempt" -eq 1 ]; then
+                    print_warning "CHIM MCP dependency install failed. Retrying after cleanup."
+                    rm -rf node_modules
+                fi
+            done
+
+            if [ "$install_success" -eq 0 ]; then
+                print_warning "CHIM MCP dependency install failed after retry."
+                mcp_failed=1
+            fi
+
+            if [ "$mcp_failed" -eq 0 ]; then
+                build_success=0
+                for attempt in 1 2; do
+                    printf ">> Building TypeScript...\n"
+                    npm run build && build_success=1 && break
+                    if [ "$attempt" -eq 1 ]; then
+                        print_warning "CHIM MCP TypeScript build failed. Retrying once."
+                    fi
+                done
+                if [ "$build_success" -eq 0 ]; then
+                    print_warning "CHIM MCP TypeScript build failed after retry."
+                    mcp_failed=1
+                fi
+            fi
+
+            if [ "$mcp_failed" -eq 0 ] && [ ! -f "dist/index.js" ]; then
+                print_warning "CHIM MCP build did not produce dist/index.js"
+                mcp_failed=1
+            fi
+        fi
+    else
+        print_warning "CHIM MCP package.json not found. Skipping MCP build."
+        mcp_failed=1
     fi
     
     # Set permissions
     sudo chown -R dwemer:dwemer /home/dwemer/CHIM-MCP
     sudo chmod -R 755 /home/dwemer/CHIM-MCP
-    printf "${GREEN}[SUCCESS] CHIM MCP Server updated successfully${NC}\n"
+    if [ "$mcp_failed" -eq 0 ]; then
+        printf "${GREEN}[SUCCESS] CHIM MCP Server updated successfully${NC}\n"
+    else
+        print_warning "CHIM MCP update had warnings and was not fully completed. Continuing."
+    fi
 fi
 
 # System permission updates
