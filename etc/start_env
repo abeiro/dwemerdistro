@@ -248,7 +248,7 @@ if [ -z "$L_MCPSERVER" ]; then
 	echo CHIM MCP Server: http://$ipaddress:3100
 fi
 
-explorer.exe http://$ipaddress:8081/HerikaServer/ui/index.php &>/dev/null&
+explorer.exe http://$ipaddress:8081/Dwemer-Dashboard/index.php &>/dev/null&
 
 echo "Press Enter to shutdown DwemerDistro"
 read

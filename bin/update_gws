@@ -52,6 +52,28 @@ echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/HerikaServer
 echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/HerikaServer
 printf "${GREEN}[SUCCESS] Server updated successfully${NC}\n"
 
+# Dwemer Dashboard update/install
+if [ ! -d /var/www/html/Dwemer-Dashboard/.git ]; then
+    print_header "INSTALLING DWEMER DASHBOARD"
+    cd /var/www/html
+    rm -rf /var/www/html/Dwemer-Dashboard
+    printf ">> Cloning Dwemer Dashboard repository...\n"
+    git clone https://github.com/Dwemer-Dynamics/Dwemer-Dashboard.git Dwemer-Dashboard
+else
+    cd /var/www/html/Dwemer-Dashboard
+    BRANCH=$(git branch --show-current)
+    print_header "UPDATING DWEMER DASHBOARD" "$BRANCH"
+    printf ">> Resetting repository...\n"
+    git reset --hard HEAD
+    printf ">> Pulling latest changes...\n"
+    git pull
+fi
+
+# Set permissions for Dwemer Dashboard
+echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/Dwemer-Dashboard
+echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/Dwemer-Dashboard
+printf "${GREEN}[SUCCESS] Dwemer Dashboard updated successfully${NC}\n"
+
 # MiniMe update
 cd /home/dwemer/minime-t5
 BRANCH=$(git branch --show-current)
