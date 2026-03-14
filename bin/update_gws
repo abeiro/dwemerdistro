@@ -52,6 +52,28 @@ echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/HerikaServer
 echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/HerikaServer
 printf "${GREEN}[SUCCESS] Server updated successfully${NC}\n"
 
+# StobeServer update/install
+if [ ! -d /var/www/html/StobeServer/.git ]; then
+    print_header "INSTALLING STOBE SERVER" "stobe"
+    cd /var/www/html
+    rm -rf /var/www/html/StobeServer
+    printf ">> Cloning StobeServer repository...\n"
+    git clone -b stobe https://github.com/Dwemer-Dynamics/StobeServer.git StobeServer
+else
+    cd /var/www/html/StobeServer
+    BRANCH=$(git branch --show-current)
+    print_header "UPDATING STOBE SERVER" "$BRANCH"
+    printf ">> Resetting repository...\n"
+    git reset --hard HEAD
+    printf ">> Pulling latest changes...\n"
+    git pull
+fi
+
+# Set permissions for StobeServer
+echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/StobeServer
+echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/StobeServer
+printf "${GREEN}[SUCCESS] StobeServer updated successfully${NC}\n"
+
 # Dwemer Dashboard update/install
 if [ ! -d /var/www/html/Dwemer-Dashboard/.git ]; then
     print_header "INSTALLING DWEMER DASHBOARD"
