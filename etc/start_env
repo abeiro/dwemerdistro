@@ -203,7 +203,8 @@ cat << EOF
 AIAgent.ini Network Settings:
 Windows Host IP: $host_ip 
 WSL2 Internal IP: $wsl_ip 
-CHIM WebServer: http://$ipaddress:8081
+HerikaServer: http://$ipaddress:8081/HerikaServer
+StobeServer: http://$ipaddress:8081/StobeServer
 
 Running Components:
 EOF
