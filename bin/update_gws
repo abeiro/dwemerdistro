@@ -41,7 +41,7 @@ printf "${BOLD}=======================================================${NC}\n\n"
 # Server update
 cd /var/www/html/HerikaServer
 BRANCH=$(git branch --show-current)
-print_header "UPDATING CHIM SERVER" "$BRANCH"
+print_header "UPDATING HERIKA SERVER" "$BRANCH"
 
 printf ">> Resetting repository...\n"
 git reset --hard HEAD
@@ -50,7 +50,7 @@ git pull
 # Set permissions for HerikaServer immediately after updating
 echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/HerikaServer
 echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/HerikaServer
-printf "${GREEN}[SUCCESS] Server updated successfully${NC}\n"
+printf "${GREEN}[SUCCESS] HerikaServer updated successfully${NC}\n"
 
 # StobeServer update/install
 if [ ! -d /var/www/html/StobeServer/.git ]; then
@@ -306,7 +306,7 @@ printf "${GREEN}[SUCCESS] Parakeet updated successfully${NC}\n"
 
 # CHIM MCP Server update/install
 if [ ! -d /home/dwemer/CHIM-MCP ]; then
-    print_header "INSTALLING CHIM MCP SERVER"
+    print_header "INSTALLING DwemerDistro MCP SERVER"
     cd /home/dwemer/
     git clone https://github.com/Dwemer-Dynamics/CHIM-MCP.git
 fi
@@ -315,16 +315,16 @@ if [ -d /home/dwemer/CHIM-MCP ]; then
     mcp_failed=0
     cd /home/dwemer/CHIM-MCP
     BRANCH=$(git branch --show-current)
-    print_header "UPDATING CHIM MCP SERVER" "$BRANCH"
+    print_header "UPDATING DwemerDistro MCP SERVER" "$BRANCH"
     
     printf ">> Resetting repository...\n"
     if ! git reset --hard HEAD; then
-        print_warning "CHIM MCP reset failed."
+        print_warning "DwemerDistro MCP reset failed."
         mcp_failed=1
     fi
     printf ">> Pulling latest changes...\n"
     if ! git pull; then
-        print_warning "CHIM MCP pull failed."
+        print_warning "DwemerDistro MCP pull failed."
         mcp_failed=1
     fi
     
@@ -343,15 +343,15 @@ if [ -d /home/dwemer/CHIM-MCP ]; then
         node_toolchain_ready=1
 
         if windows_node_toolchain_detected; then
-            print_warning "CHIM MCP resolved missing/Windows npm-node inside WSL. Attempting Linux nodejs/npm install."
+            print_warning "DwemerDistro MCP resolved missing/Windows npm-node inside WSL. Attempting Linux nodejs/npm install."
             if ! echo $PASSWORD | sudo -S apt-get update || ! echo $PASSWORD | sudo -S apt-get -y install nodejs npm; then
-                print_warning "CHIM MCP could not auto-install Linux nodejs/npm."
+                print_warning "DwemerDistro MCP could not auto-install Linux nodejs/npm."
                 node_toolchain_ready=0
                 mcp_failed=1
             else
                 refresh_node_paths
                 if windows_node_toolchain_detected; then
-                    print_warning "CHIM MCP still resolves to missing/Windows npm-node after install."
+                    print_warning "DwemerDistro MCP still resolves to missing/Windows npm-node after install."
                     print_warning "Ensure WSL PATH prefers /usr/bin for node/npm."
                     node_toolchain_ready=0
                     mcp_failed=1
@@ -371,13 +371,13 @@ if [ -d /home/dwemer/CHIM-MCP ]; then
                     npm install && install_success=1 && break
                 fi
                 if [ "$attempt" -eq 1 ]; then
-                    print_warning "CHIM MCP dependency install failed. Retrying after cleanup."
+                    print_warning "DwemerDistro MCP dependency install failed. Retry    ing after cleanup."
                     rm -rf node_modules
                 fi
             done
 
             if [ "$install_success" -eq 0 ]; then
-                print_warning "CHIM MCP dependency install failed after retry."
+                print_warning "DwemerDistro MCP dependency install failed after retry."
                 mcp_failed=1
             fi
 
@@ -387,22 +387,22 @@ if [ -d /home/dwemer/CHIM-MCP ]; then
                     printf ">> Building TypeScript...\n"
                     npm run build && build_success=1 && break
                     if [ "$attempt" -eq 1 ]; then
-                        print_warning "CHIM MCP TypeScript build failed. Retrying once."
+                        print_warning "DwemerDistro MCP TypeScript build failed. Retrying once."
                     fi
                 done
                 if [ "$build_success" -eq 0 ]; then
-                    print_warning "CHIM MCP TypeScript build failed after retry."
+                    print_warning "DwemerDistro MCP TypeScript build failed after retry."
                     mcp_failed=1
                 fi
             fi
 
             if [ "$mcp_failed" -eq 0 ] && [ ! -f "dist/index.js" ]; then
-                print_warning "CHIM MCP build did not produce dist/index.js"
+                print_warning "DwemerDistro MCP build did not produce dist/index.js"
                 mcp_failed=1
             fi
         fi
     else
-        print_warning "CHIM MCP package.json not found. Skipping MCP build."
+        print_warning "DwemerDistro MCP package.json not found. Skipping MCP build."
         mcp_failed=1
     fi
     
@@ -410,9 +410,9 @@ if [ -d /home/dwemer/CHIM-MCP ]; then
     sudo chown -R dwemer:dwemer /home/dwemer/CHIM-MCP
     sudo chmod -R 755 /home/dwemer/CHIM-MCP
     if [ "$mcp_failed" -eq 0 ]; then
-        printf "${GREEN}[SUCCESS] CHIM MCP Server updated successfully${NC}\n"
+        printf "${GREEN}[SUCCESS] DwemerDistro MCP Server updated successfully${NC}\n"
     else
-        print_warning "CHIM MCP update had warnings and was not fully completed. Continuing."
+        print_warning "DwemerDistro MCP update had warnings and was not fully completed. Continuing."
     fi
 fi
 
