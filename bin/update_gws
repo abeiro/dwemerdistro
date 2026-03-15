@@ -35,6 +35,68 @@ print_warning() {
     printf "${RED}[WARNING] %s${NC}\n" "$1"
 }
 
+ensure_stobe_database() {
+    local schema_path="/var/www/html/StobeServer/data/schema.sql"
+    local db_exists=""
+    local schema_ready=""
+
+    print_header "ENSURING STOBE DATABASE"
+
+    if [ ! -d /var/www/html/StobeServer ]; then
+        print_warning "StobeServer directory not found; skipping database provisioning."
+        return 1
+    fi
+
+    export PGPASSWORD=dwemer
+
+    db_exists=$(psql -h localhost -U dwemer -tAc "SELECT 1 FROM pg_database WHERE datname = 'stobe' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+    if [ "$db_exists" != "1" ]; then
+        printf ">> Creating stobe database...\n"
+        if ! createdb -h localhost -U dwemer stobe >/dev/null 2>&1; then
+            print_warning "Failed to create stobe database."
+            unset PGPASSWORD
+            return 1
+        fi
+        print_success "Database 'stobe' created."
+    else
+        print_success "Database 'stobe' already exists."
+    fi
+
+    if [ ! -f "$schema_path" ]; then
+        print_warning "Stobe schema file missing: $schema_path"
+        unset PGPASSWORD
+        return 1
+    fi
+
+    schema_ready=$(psql -h localhost -U dwemer -d stobe -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='general_settings' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+    if [ "$schema_ready" != "1" ]; then
+        printf ">> Applying Stobe schema...\n"
+        if ! psql -h localhost -U dwemer -d stobe -f "$schema_path" >/dev/null 2>&1; then
+            print_warning "Failed to apply Stobe schema."
+            unset PGPASSWORD
+            return 1
+        fi
+        print_success "Stobe schema applied."
+    else
+        print_success "Stobe schema already present."
+    fi
+
+    if [ -f /var/www/html/StobeServer/debug/run_db_updates.php ]; then
+        printf ">> Running Stobe DB updates...\n"
+        if ! php /var/www/html/StobeServer/debug/run_db_updates.php >/dev/null 2>&1; then
+            print_warning "StobeServer DB update trigger failed. Check StobeServer logs."
+            unset PGPASSWORD
+            return 1
+        fi
+        print_success "Stobe DB updates completed."
+    else
+        print_warning "Stobe DB update runner not found; skipping."
+    fi
+
+    unset PGPASSWORD
+    return 0
+}
+
 # Optional selective server updates.
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -95,7 +157,11 @@ if [ "$UPDATE_STOBE" -eq 1 ]; then
     # Set permissions for StobeServer
     echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/StobeServer
     echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/StobeServer
-    printf "${GREEN}[SUCCESS] StobeServer updated successfully${NC}\n"
+    if ensure_stobe_database; then
+        printf "${GREEN}[SUCCESS] StobeServer updated successfully${NC}\n"
+    else
+        print_warning "StobeServer updated, but DB provisioning was incomplete."
+    fi
 else
     print_warning "Skipping StobeServer update by request"
 fi

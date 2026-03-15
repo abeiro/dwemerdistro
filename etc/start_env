@@ -76,12 +76,67 @@ EOF
     a2ensite stobe.conf >/dev/null 2>&1 || true
 }
 
+ensure_stobe_database() {
+    local schema_path="/var/www/html/StobeServer/data/schema.sql"
+    local db_exists=""
+    local schema_ready=""
+
+    if [ ! -d /var/www/html/StobeServer ]; then
+        echo "Skipping StobeServer DB bootstrap (StobeServer not installed)."
+        return 0
+    fi
+
+    export PGPASSWORD=dwemer
+
+    db_exists=$(psql -h localhost -U dwemer -tAc "SELECT 1 FROM pg_database WHERE datname = 'stobe' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+    if [ "$db_exists" != "1" ]; then
+        echo "Creating StobeServer database..."
+        if ! createdb -h localhost -U dwemer stobe >/dev/null 2>&1; then
+            echo "WARNING: Failed to create stobe database."
+            unset PGPASSWORD
+            return 1
+        fi
+    fi
+
+    if [ ! -f "$schema_path" ]; then
+        echo "WARNING: StobeServer schema file missing at $schema_path"
+        unset PGPASSWORD
+        return 1
+    fi
+
+    schema_ready=$(psql -h localhost -U dwemer -d stobe -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='general_settings' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+    if [ "$schema_ready" != "1" ]; then
+        echo "Applying StobeServer schema..."
+        if ! psql -h localhost -U dwemer -d stobe -f "$schema_path" >/dev/null 2>&1; then
+            echo "WARNING: Failed to apply StobeServer schema."
+            unset PGPASSWORD
+            return 1
+        fi
+    fi
+
+    if [ -f /var/www/html/StobeServer/debug/run_db_updates.php ]; then
+        if ! php /var/www/html/StobeServer/debug/run_db_updates.php >/dev/null 2>&1; then
+            echo "WARNING: StobeServer DB update trigger failed. Check StobeServer logs."
+            unset PGPASSWORD
+            return 1
+        fi
+    fi
+
+    echo "StobeServer database ready."
+    unset PGPASSWORD
+    return 0
+}
+
 ensure_stobe_apache_vhost
 
 # Start Apache/PHP server
 echo "Starting Apache/PHP/PGSQL Server"
 /etc/init.d/apache2 restart &>/dev/null
 /etc/init.d/postgresql restart
+
+if ! ensure_stobe_database; then
+    echo "WARNING: StobeServer may not be fully initialized."
+fi
 
 # Create symbolic link for Apache error log if it doesn't exist
 if [ ! -e "/var/www/html/HerikaServer/log/apache_error.log" ]; then
