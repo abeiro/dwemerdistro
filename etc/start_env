@@ -38,7 +38,45 @@ check_port() {
 wsl_ip=$(/usr/local/bin/get_ip --wsl)
 host_ip=$(/usr/local/bin/get_ip --host)
 
+ensure_stobe_apache_vhost() {
+    local ports_conf="/etc/apache2/ports.conf"
+    local stobe_conf="/etc/apache2/sites-available/stobe.conf"
 
+    # Ensure Apache listens on 8083 for StobeServer.
+    if ! grep -Eq '^[[:space:]]*Listen[[:space:]]+0\.0\.0\.0:8083([[:space:]]|$)' "$ports_conf"; then
+        echo "Listen 0.0.0.0:8083" >> "$ports_conf"
+    fi
+
+    # Ensure StobeServer vhost keeps /StobeServer endpoint on port 8083.
+    cat > "$stobe_conf" << 'EOF'
+<VirtualHost *:8083>
+	ServerAdmin webmaster@localhost
+	DocumentRoot /var/www/html
+	Alias /StobeServer /var/www/html/StobeServer
+
+	<Directory /var/www/html>
+		Options -Indexes +FollowSymLinks
+		AllowOverride All
+		Require all granted
+	</Directory>
+
+	<Directory /var/www/html/StobeServer>
+		Options -Indexes +FollowSymLinks
+		AllowOverride All
+		Require all granted
+	</Directory>
+
+	ErrorLog ${APACHE_LOG_DIR}/stobe_error.log
+	CustomLog ${APACHE_LOG_DIR}/stobe_access.log combined
+
+	LimitRequestLine 65535
+</VirtualHost>
+EOF
+
+    a2ensite stobe.conf >/dev/null 2>&1 || true
+}
+
+ensure_stobe_apache_vhost
 
 # Start Apache/PHP server
 echo "Starting Apache/PHP/PGSQL Server"
@@ -204,7 +242,7 @@ AIAgent.ini Network Settings:
 Windows Host IP: $host_ip 
 WSL2 Internal IP: $wsl_ip 
 HerikaServer: http://$ipaddress:8081/HerikaServer
-StobeServer: http://$ipaddress:8081/StobeServer
+StobeServer: http://$ipaddress:8083/StobeServer
 
 Running Components:
 EOF

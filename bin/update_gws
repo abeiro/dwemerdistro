@@ -8,6 +8,8 @@ NC='\033[0m' # No Color
 
 # Store password for sudo commands
 PASSWORD="dwemer"
+UPDATE_HERIKA=1
+UPDATE_STOBE=1
 
 # Helper function for section headers
 print_header() {
@@ -33,46 +35,70 @@ print_warning() {
     printf "${RED}[WARNING] %s${NC}\n" "$1"
 }
 
+# Optional selective server updates.
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --skip-herika)
+            UPDATE_HERIKA=0
+            ;;
+        --skip-stobe)
+            UPDATE_STOBE=0
+            ;;
+        *)
+            print_warning "Unknown option '$1' ignored"
+            ;;
+    esac
+    shift
+done
+
 # Main title
 printf "\n${BOLD}=======================================================${NC}\n"
 printf "${BOLD}          DWEMER DYNAMICS SYSTEM UPDATE                ${NC}\n"
 printf "${BOLD}=======================================================${NC}\n\n"
 
 # Server update
-cd /var/www/html/HerikaServer
-BRANCH=$(git branch --show-current)
-print_header "UPDATING HERIKA SERVER" "$BRANCH"
-
-printf ">> Resetting repository...\n"
-git reset --hard HEAD
-printf ">> Pulling latest changes...\n"
-git pull
-# Set permissions for HerikaServer immediately after updating
-echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/HerikaServer
-echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/HerikaServer
-printf "${GREEN}[SUCCESS] HerikaServer updated successfully${NC}\n"
-
-# StobeServer update/install
-if [ ! -d /var/www/html/StobeServer/.git ]; then
-    print_header "INSTALLING STOBE SERVER" "stobe"
-    cd /var/www/html
-    rm -rf /var/www/html/StobeServer
-    printf ">> Cloning StobeServer repository...\n"
-    git clone -b stobe https://github.com/Dwemer-Dynamics/StobeServer.git StobeServer
-else
-    cd /var/www/html/StobeServer
+if [ "$UPDATE_HERIKA" -eq 1 ]; then
+    cd /var/www/html/HerikaServer
     BRANCH=$(git branch --show-current)
-    print_header "UPDATING STOBE SERVER" "$BRANCH"
+    print_header "UPDATING HERIKA SERVER" "$BRANCH"
+
     printf ">> Resetting repository...\n"
     git reset --hard HEAD
     printf ">> Pulling latest changes...\n"
     git pull
+    # Set permissions for HerikaServer immediately after updating
+    echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/HerikaServer
+    echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/HerikaServer
+    printf "${GREEN}[SUCCESS] HerikaServer updated successfully${NC}\n"
+else
+    print_warning "Skipping HerikaServer update by request"
 fi
 
-# Set permissions for StobeServer
-echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/StobeServer
-echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/StobeServer
-printf "${GREEN}[SUCCESS] StobeServer updated successfully${NC}\n"
+if [ "$UPDATE_STOBE" -eq 1 ]; then
+    # StobeServer update/install
+    if [ ! -d /var/www/html/StobeServer/.git ]; then
+        print_header "INSTALLING STOBE SERVER" "stobe"
+        cd /var/www/html
+        rm -rf /var/www/html/StobeServer
+        printf ">> Cloning StobeServer repository...\n"
+        git clone -b stobe https://github.com/Dwemer-Dynamics/StobeServer.git StobeServer
+    else
+        cd /var/www/html/StobeServer
+        BRANCH=$(git branch --show-current)
+        print_header "UPDATING STOBE SERVER" "$BRANCH"
+        printf ">> Resetting repository...\n"
+        git reset --hard HEAD
+        printf ">> Pulling latest changes...\n"
+        git pull
+    fi
+
+    # Set permissions for StobeServer
+    echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/StobeServer
+    echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/StobeServer
+    printf "${GREEN}[SUCCESS] StobeServer updated successfully${NC}\n"
+else
+    print_warning "Skipping StobeServer update by request"
+fi
 
 # Dwemer Dashboard update/install
 if [ ! -d /var/www/html/Dwemer-Dashboard/.git ]; then
