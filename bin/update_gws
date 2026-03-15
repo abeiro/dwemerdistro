@@ -82,12 +82,21 @@ ensure_stobe_database() {
     fi
 
     if [ -f /var/www/html/StobeServer/debug/run_db_updates.php ]; then
+        local stobe_db_update_log="/var/www/html/StobeServer/log/db_update_runner.log"
+        local stobe_db_update_tmp="/tmp/stobe_db_update_runner.out"
         printf ">> Running Stobe DB updates...\n"
-        if ! php /var/www/html/StobeServer/debug/run_db_updates.php >/dev/null 2>&1; then
-            print_warning "StobeServer DB update trigger failed. Check StobeServer logs."
+        if ! php /var/www/html/StobeServer/debug/run_db_updates.php >"$stobe_db_update_tmp" 2>&1; then
+            mkdir -p /var/www/html/StobeServer/log >/dev/null 2>&1 || true
+            {
+                printf "\n[%s] update_gws: run_db_updates.php failed\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+                cat "$stobe_db_update_tmp"
+            } >> "$stobe_db_update_log"
+            print_warning "StobeServer DB update trigger failed. See $stobe_db_update_log"
+            rm -f "$stobe_db_update_tmp"
             unset PGPASSWORD
             return 1
         fi
+        rm -f "$stobe_db_update_tmp"
         print_success "Stobe DB updates completed."
     else
         print_warning "Stobe DB update runner not found; skipping."
