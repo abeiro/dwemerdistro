@@ -66,6 +66,18 @@ ensure_stobe_apache_vhost() {
 		Require all granted
 	</Directory>
 
+	<Directory /var/www/html/StobeServer/soundcache>
+		Options +Indexes +FollowSymLinks
+		AllowOverride None
+		Require all granted
+	</Directory>
+
+	<Directory /var/www/html/StobeServer/ui/images>
+		Options +Indexes +FollowSymLinks
+		AllowOverride None
+		Require all granted
+	</Directory>
+
 	ErrorLog ${APACHE_LOG_DIR}/stobe_error.log
 	CustomLog ${APACHE_LOG_DIR}/stobe_access.log combined
 
