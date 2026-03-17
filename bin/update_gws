@@ -35,6 +35,27 @@ print_warning() {
     printf "${RED}[WARNING] %s${NC}\n" "$1"
 }
 
+clear_stobe_initial_logs() {
+    local log_dir="/var/www/html/StobeServer/log"
+    local stobe_import_log="$log_dir/stobe_import.log"
+    local stobeserver_log="$log_dir/stobeserver.log"
+
+    mkdir -p "$log_dir" >/dev/null 2>&1 || true
+
+    if ! : > "$stobe_import_log"; then
+        print_warning "Failed to clear $stobe_import_log during initial install."
+        return 1
+    fi
+
+    if ! : > "$stobeserver_log"; then
+        print_warning "Failed to clear $stobeserver_log during initial install."
+        return 1
+    fi
+
+    print_success "Cleared initial Stobe log files."
+    return 0
+}
+
 ensure_stobe_database() {
     local schema_path="/var/www/html/StobeServer/data/schema.sql"
     local db_exists=""
@@ -146,13 +167,19 @@ else
 fi
 
 if [ "$UPDATE_STOBE" -eq 1 ]; then
+    STOBE_INITIAL_INSTALL=0
+
     # StobeServer update/install
     if [ ! -d /var/www/html/StobeServer/.git ]; then
         print_header "INSTALLING STOBE SERVER" "stobe"
         cd /var/www/html
         rm -rf /var/www/html/StobeServer
         printf ">> Cloning StobeServer repository...\n"
-        git clone -b stobe https://github.com/Dwemer-Dynamics/StobeServer.git StobeServer
+        if git clone -b stobe https://github.com/Dwemer-Dynamics/StobeServer.git StobeServer; then
+            STOBE_INITIAL_INSTALL=1
+        else
+            print_warning "Failed to clone StobeServer repository."
+        fi
     else
         cd /var/www/html/StobeServer
         BRANCH=$(git branch --show-current)
@@ -161,6 +188,11 @@ if [ "$UPDATE_STOBE" -eq 1 ]; then
         git reset --hard HEAD
         printf ">> Pulling latest changes...\n"
         git pull
+    fi
+
+    if [ "$STOBE_INITIAL_INSTALL" -eq 1 ]; then
+        printf ">> Clearing seeded Stobe logs for initial install...\n"
+        clear_stobe_initial_logs || print_warning "StobeServer initial install log reset was incomplete."
     fi
 
     # Set permissions for StobeServer
