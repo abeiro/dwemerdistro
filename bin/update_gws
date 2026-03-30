@@ -35,6 +35,60 @@ print_warning() {
     printf "${RED}[WARNING] %s${NC}\n" "$1"
 }
 
+normalize_stobe_repo_path() {
+    local canonical_path="/var/www/html/StobeServer"
+    local legacy_path=""
+
+    for legacy_path in /var/www/html/stobeserver /var/www/html/stoberser; do
+        if [ -d "$legacy_path/.git" ] && [ ! -d "$canonical_path/.git" ]; then
+            print_warning "Found legacy StobeServer path at $legacy_path. Migrating to $canonical_path."
+            rm -rf "$canonical_path"
+            if ! mv "$legacy_path" "$canonical_path"; then
+                print_warning "Failed to migrate legacy StobeServer path from $legacy_path."
+                return 1
+            fi
+            print_success "Migrated StobeServer repository to canonical path."
+        fi
+    done
+
+    return 0
+}
+
+ensure_stobe_repo_exists() {
+    local target_branch="${1:-stobe}"
+    local repo_path="/var/www/html/StobeServer"
+
+    mkdir -p /var/www/html >/dev/null 2>&1 || true
+
+    if ! normalize_stobe_repo_path; then
+        return 1
+    fi
+
+    if [ ! -d "$repo_path/.git" ]; then
+        print_header "INSTALLING STOBE SERVER" "$target_branch"
+        cd /var/www/html || {
+            print_warning "Base path /var/www/html is missing and could not be accessed."
+            return 1
+        }
+
+        rm -rf "$repo_path"
+        printf ">> Cloning StobeServer repository...\n"
+        if git clone -b "$target_branch" https://github.com/Dwemer-Dynamics/StobeServer.git StobeServer; then
+            STOBE_INITIAL_INSTALL=1
+        else
+            print_warning "Failed to clone StobeServer repository."
+            return 1
+        fi
+    fi
+
+    if [ ! -d "$repo_path/.git" ]; then
+        print_warning "StobeServer repository is not ready at $repo_path."
+        return 1
+    fi
+
+    return 0
+}
+
 clear_stobe_initial_logs() {
     local log_dir="/var/www/html/StobeServer/log"
     local stobe_import_log="$log_dir/stobe_import.log"
@@ -168,40 +222,40 @@ fi
 
 if [ "$UPDATE_STOBE" -eq 1 ]; then
     STOBE_INITIAL_INSTALL=0
+    if ensure_stobe_repo_exists "stobe"; then
+        cd /var/www/html/StobeServer || {
+            print_warning "Could not access /var/www/html/StobeServer after setup."
+            STOBE_SETUP_FAILED=1
+        }
 
-    # StobeServer update/install
-    if [ ! -d /var/www/html/StobeServer/.git ]; then
-        print_header "INSTALLING STOBE SERVER" "stobe"
-        cd /var/www/html
-        rm -rf /var/www/html/StobeServer
-        printf ">> Cloning StobeServer repository...\n"
-        if git clone -b stobe https://github.com/Dwemer-Dynamics/StobeServer.git StobeServer; then
-            STOBE_INITIAL_INSTALL=1
+        if [ "${STOBE_SETUP_FAILED:-0}" -ne 1 ]; then
+            if [ "$STOBE_INITIAL_INSTALL" -eq 0 ]; then
+                BRANCH=$(git branch --show-current)
+                print_header "UPDATING STOBE SERVER" "$BRANCH"
+                printf ">> Resetting repository...\n"
+                git reset --hard HEAD
+                printf ">> Pulling latest changes...\n"
+                git pull
+            fi
+
+            if [ "$STOBE_INITIAL_INSTALL" -eq 1 ]; then
+                printf ">> Clearing seeded Stobe logs for initial install...\n"
+                clear_stobe_initial_logs || print_warning "StobeServer initial install log reset was incomplete."
+            fi
+
+            # Set permissions for StobeServer
+            echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/StobeServer
+            echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/StobeServer
+            if ensure_stobe_database; then
+                printf "${GREEN}[SUCCESS] StobeServer updated successfully${NC}\n"
+            else
+                print_warning "StobeServer updated, but DB provisioning was incomplete."
+            fi
         else
-            print_warning "Failed to clone StobeServer repository."
+            print_warning "StobeServer setup failed; skipping remaining StobeServer update steps."
         fi
     else
-        cd /var/www/html/StobeServer
-        BRANCH=$(git branch --show-current)
-        print_header "UPDATING STOBE SERVER" "$BRANCH"
-        printf ">> Resetting repository...\n"
-        git reset --hard HEAD
-        printf ">> Pulling latest changes...\n"
-        git pull
-    fi
-
-    if [ "$STOBE_INITIAL_INSTALL" -eq 1 ]; then
-        printf ">> Clearing seeded Stobe logs for initial install...\n"
-        clear_stobe_initial_logs || print_warning "StobeServer initial install log reset was incomplete."
-    fi
-
-    # Set permissions for StobeServer
-    echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/StobeServer
-    echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/StobeServer
-    if ensure_stobe_database; then
-        printf "${GREEN}[SUCCESS] StobeServer updated successfully${NC}\n"
-    else
-        print_warning "StobeServer updated, but DB provisioning was incomplete."
+        print_warning "StobeServer repository setup failed; skipping StobeServer update."
     fi
 else
     print_warning "Skipping StobeServer update by request"
