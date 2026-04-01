@@ -1,4 +1,15 @@
 #!/bin/bash
 
-cd /var/www/html/ && chown -R dwemer:www-data  . && chmod -R 775 .
+set -e
+
+WEB_ROOT="/var/www/html"
+HERIKA_LOG_DIR="${WEB_ROOT}/HerikaServer/log"
+
+cd "$WEB_ROOT" && chown -R dwemer:www-data . && chmod -R 775 .
+
+# Keep logs readable/writable across dwemer + www-data processes.
+if [ -d "$HERIKA_LOG_DIR" ]; then
+    find "$HERIKA_LOG_DIR" -type d -exec chmod 2775 {} \;
+    find "$HERIKA_LOG_DIR" -type f -exec chmod 664 {} \;
+fi
 

@@ -148,7 +148,36 @@ ensure_stobe_database() {
     return 0
 }
 
+ensure_herika_log_permissions() {
+    local herika_root="/var/www/html/HerikaServer"
+    local log_dir="${herika_root}/log"
+    local log_files=(
+        "service.log"
+        "log_run_agent.log"
+        "chim.log"
+        "manager.log"
+        "monitor.log"
+    )
+
+    if [ ! -d "$herika_root" ]; then
+        echo "Skipping HerikaServer log permission bootstrap (HerikaServer not installed)."
+        return 0
+    fi
+
+    mkdir -p "$log_dir" >/dev/null 2>&1 || true
+    chown -R dwemer:www-data "$log_dir" >/dev/null 2>&1 || true
+    chmod 2775 "$log_dir" >/dev/null 2>&1 || true
+
+    for log_file in "${log_files[@]}"; do
+        local full_path="${log_dir}/${log_file}"
+        touch "$full_path" >/dev/null 2>&1 || true
+        chown dwemer:www-data "$full_path" >/dev/null 2>&1 || true
+        chmod 664 "$full_path" >/dev/null 2>&1 || true
+    done
+}
+
 ensure_stobe_apache_vhost
+ensure_herika_log_permissions
 
 # Start Apache/PHP server
 echo "Starting Apache/PHP/PGSQL Server"
