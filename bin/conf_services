@@ -16,7 +16,12 @@
 
 /home/dwemer/piper/conf.sh
 
-[ -f /home/dwemer/parakeet-api-server/conf.sh ] && /home/dwemer/parakeet-api-server/conf.sh
-[ -f /home/dwemer/chatterbox/conf.sh ] && /home/dwemer/chatterbox/conf.sh
-[ -f /home/dwemer/pocket-tts/conf.sh ] && /home/dwemer/pocket-tts/conf.sh
+is_installed_component() {
+    local component_dir="$1"
+    [ -f "$component_dir/conf.sh" ] && [ -d "$component_dir/venv" ]
+}
+
+is_installed_component /home/dwemer/parakeet-api-server && /home/dwemer/parakeet-api-server/conf.sh
+is_installed_component /home/dwemer/chatterbox && /home/dwemer/chatterbox/conf.sh
+is_installed_component /home/dwemer/pocket-tts && /home/dwemer/pocket-tts/conf.sh
 
