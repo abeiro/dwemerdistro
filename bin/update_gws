@@ -292,6 +292,12 @@ printf ">> Resetting repository...\n"
 git reset --hard HEAD
 printf ">> Pulling latest changes...\n"
 git pull
+if [ -x /home/dwemer/python-minime/bin/pip ]; then
+    printf ">> Updating Python dependencies...\n"
+    /home/dwemer/python-minime/bin/pip install -r requirements.txt
+else
+    print_warning "MiniMe virtual environment not found at /home/dwemer/python-minime; run the MiniMe component installer to install dependencies."
+fi
 
 # Set permissions for minime-t5
 sudo chown -R dwemer:dwemer /home/dwemer/minime-t5

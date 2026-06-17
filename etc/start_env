@@ -197,7 +197,9 @@ fi
 if [ -f  "/home/dwemer/minime-t5/start.sh" ]; then
 	echo -ne  "Starting Minime-T5/TXT2VEC service "
 	su dwemer -c /home/dwemer/minime-t5/start.sh
-	check_port 8082
+	if ! check_port 8082; then
+		L_MINIME=1
+	fi
 else
 	echo "Skipping Minime-T5/TXT2VEC service (not enabled)"
 	L_MINIME=1
@@ -233,7 +235,9 @@ fi
 if [ -f /home/dwemer/chatterbox/start.sh ];then
 	echo -ne  "Starting Chatterbox"
 	su dwemer -c /home/dwemer/chatterbox/start.sh
-	check_port 8022
+	if ! check_port 8020; then
+		L_CHATTERBOX=1
+	fi
 else
 	echo "Skipping Chatterbox (not enabled)"
 	L_CHATTERBOX=1
