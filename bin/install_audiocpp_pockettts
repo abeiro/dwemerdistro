@@ -1,0 +1,215 @@
+#!/bin/bash
+
+set -euo pipefail
+
+BASE_DIR="/home/dwemer"
+REPO_DIR="$BASE_DIR/audio.cpp"
+REPO_URL="https://github.com/abeiro/audio.cpp"
+CUDA_VERSION="${1:-12.8}"
+BUILD_PARALLEL="${BUILD_PARALLEL:-2}"
+
+run_as_dwemer() {
+    if [ "$(id -un)" = "dwemer" ]; then
+        bash -lc "$1"
+    else
+        sudo -u dwemer bash -lc "$1"
+    fi
+}
+
+install_cuda_keyring() {
+    if dpkg-query -W cuda-keyring >/dev/null 2>&1; then
+        return
+    fi
+
+    local keyring="/tmp/cuda-keyring_1.1-1_all.deb"
+    wget -O "$keyring" https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb
+    sudo dpkg -i "$keyring"
+}
+
+install_cuda_toolkit() {
+    local version="$1"
+    local candidates=()
+
+    case "$version" in
+        13|13.0)
+            candidates=("cuda-toolkit-13" "cuda-toolkit-13-0")
+            ;;
+        12.8|12-8)
+            candidates=("cuda-toolkit-12-8" "cuda-toolkit-12.8")
+            ;;
+        *)
+            echo "Unsupported CUDA version '$version'. Use 12.8 or 13."
+            exit 1
+            ;;
+    esac
+
+    for package in "${candidates[@]}"; do
+        if apt-cache show "$package" >/dev/null 2>&1; then
+            sudo apt-get -y install "$package"
+            return
+        fi
+    done
+
+    echo "Could not find a CUDA toolkit package for version $version."
+    exit 1
+}
+
+resolve_cuda_home() {
+    if [ -d "/usr/local/cuda-$CUDA_VERSION" ]; then
+        echo "/usr/local/cuda-$CUDA_VERSION"
+        return
+    fi
+    if [ "$CUDA_VERSION" = "13" ] && [ -d "/usr/local/cuda-13.0" ]; then
+        echo "/usr/local/cuda-13.0"
+        return
+    fi
+    if [ "$CUDA_VERSION" = "12.8" ] && [ -d "/usr/local/cuda-12.8" ]; then
+        echo "/usr/local/cuda-12.8"
+        return
+    fi
+    echo "/usr/local/cuda"
+}
+
+write_runtime_files() {
+    cat > "$REPO_DIR/server.json" <<'JSON'
+{
+  "host": "127.0.0.1",
+  "port": 8086,
+  "device": 0,
+  "threads": 1,
+  "models": [
+    {
+      "id": "pocket-tts",
+      "family": "pocket_tts",
+      "path": "models/pocket-tts",
+      "task": "tts",
+      "mode": "offline",
+      "load_options": {
+        "language": "english"
+      },
+      "session_options": {
+        "language": "english"
+      }
+    }
+  ]
+}
+JSON
+
+    cat > "$REPO_DIR/start-audiocpp-pockettts.sh" <<'BASH'
+#!/bin/bash
+set -euo pipefail
+
+cd /home/dwemer/audio.cpp
+
+if [ -f "/home/dwemer/.cuda_config" ]; then
+    source /home/dwemer/.cuda_config
+fi
+
+if [ -d "/usr/local/cuda-12.8" ]; then
+    export CUDA_HOME="/usr/local/cuda-12.8"
+elif [ -d "/usr/local/cuda-13.0" ]; then
+    export CUDA_HOME="/usr/local/cuda-13.0"
+elif [ -d "/usr/local/cuda" ]; then
+    export CUDA_HOME="/usr/local/cuda"
+fi
+
+if [ -n "${CUDA_HOME:-}" ]; then
+    export PATH="$CUDA_HOME/bin:$PATH"
+fi
+
+export LD_LIBRARY_PATH="/usr/lib/wsl/lib:${CUDA_HOME:-/usr/local/cuda}/targets/x86_64-linux/lib:${LD_LIBRARY_PATH:-}"
+
+mkdir -p speakers
+build/bin/audiocpp_server --config server.json >> server.log 2>&1 &
+BASH
+
+    cat > "$REPO_DIR/conf.sh" <<'BASH'
+#!/bin/bash
+
+REPO_DIR="/home/dwemer/audio.cpp"
+
+clear
+cat << EOF
+PocketTTS audio.cpp
+
+This configures the C++ PocketTTS runtime. Python is only used by the installer
+to download the model; the running TTS server is build/bin/audiocpp_server.
+
+EOF
+
+if [ ! -x "$REPO_DIR/build/bin/audiocpp_server" ]; then
+    echo "Error: audio.cpp is not built. Run /usr/local/bin/install_audiocpp_pockettts first."
+    exit 1
+fi
+
+while true; do
+    echo "Select an option from the list:"
+    echo
+    echo "1. Enable service"
+    echo "0. Disable service"
+    echo
+
+    read -r -p "Select an option by picking the matching number: " selection
+
+    case "$selection" in
+        0)
+            rm "$REPO_DIR/start.sh" &>/dev/null || true
+            echo "[OK] PocketTTS audio.cpp disabled"
+            exit 0
+            ;;
+        1)
+            ln -sf "$REPO_DIR/start-audiocpp-pockettts.sh" "$REPO_DIR/start.sh"
+            echo "[OK] PocketTTS audio.cpp enabled"
+            exit 0
+            ;;
+        *)
+            echo "Invalid selection. Enter 0 or 1."
+            echo
+            ;;
+    esac
+done
+BASH
+
+    chmod +x "$REPO_DIR/start-audiocpp-pockettts.sh" "$REPO_DIR/conf.sh"
+    chown -R dwemer:dwemer "$REPO_DIR"
+}
+
+ensure_hf_token() {
+    if [ -n "${HF_TOKEN:-}" ] || [ -n "${HUGGING_FACE_HUB_TOKEN:-}" ] || [ -f "$BASE_DIR/.cache/huggingface/token" ]; then
+        return
+    fi
+
+    echo "PocketTTS model download requires a Hugging Face token with access to the gated model."
+    read -r -s -p "HF token: " HF_TOKEN
+    echo
+    export HF_TOKEN
+
+    sudo -u dwemer mkdir -p "$BASE_DIR/.cache/huggingface"
+    sudo chmod 700 "$BASE_DIR/.cache/huggingface"
+    printf '%s' "$HF_TOKEN" | sudo -u dwemer tee "$BASE_DIR/.cache/huggingface/token" >/dev/null
+    sudo chmod 600 "$BASE_DIR/.cache/huggingface/token"
+}
+
+echo "Installing audio.cpp PocketTTS with CUDA $CUDA_VERSION"
+install_cuda_keyring
+sudo apt update
+sudo apt-get -y install git cmake build-essential ninja-build python3-venv python3-pip
+install_cuda_toolkit "$CUDA_VERSION"
+
+if [ ! -d "$REPO_DIR/.git" ]; then
+    run_as_dwemer "cd '$BASE_DIR' && git clone '$REPO_URL'"
+else
+    run_as_dwemer "cd '$REPO_DIR' && git remote set-url origin '$REPO_URL' && git pull"
+fi
+
+CUDA_HOME="$(resolve_cuda_home)"
+run_as_dwemer "cd '$REPO_DIR' && export CUDA_HOME='$CUDA_HOME' && export PATH=\"\$CUDA_HOME/bin:\$PATH\" && rm -rf build && cmake -S . -B build -DENGINE_ENABLE_CUDA=ON && cmake --build build --parallel '$BUILD_PARALLEL' --target audiocpp_cli --target audiocpp_server"
+
+ensure_hf_token
+run_as_dwemer "cd '$REPO_DIR' && python3 -m venv model-venv && source model-venv/bin/activate && pip install --upgrade pip && pip install pyyaml torch safetensors && python3 tools/model_manager.py install pocket_tts --overwrite"
+
+write_runtime_files
+
+echo
+echo "[OK] audio.cpp PocketTTS is installed."
+echo "Run /home/dwemer/audio.cpp/conf.sh and enable the service, then restart DwemerDistro."
