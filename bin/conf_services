@@ -21,7 +21,13 @@ is_installed_component() {
     [ -f "$component_dir/conf.sh" ] && [ -d "$component_dir/venv" ]
 }
 
+is_installed_audiocpp_pockettts() {
+    local component_dir="$1"
+    [ -f "$component_dir/conf.sh" ] && [ -x "$component_dir/build/bin/audiocpp_server" ]
+}
+
 is_installed_component /home/dwemer/parakeet-api-server && /home/dwemer/parakeet-api-server/conf.sh
 is_installed_component /home/dwemer/chatterbox && /home/dwemer/chatterbox/conf.sh
+is_installed_audiocpp_pockettts /home/dwemer/audio.cpp && /home/dwemer/audio.cpp/conf.sh
 is_installed_component /home/dwemer/pocket-tts && /home/dwemer/pocket-tts/conf.sh
 

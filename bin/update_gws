@@ -468,6 +468,30 @@ sudo chown -R dwemer:dwemer /home/dwemer/chatterbox
 sudo chmod -R 755 /home/dwemer/chatterbox
 printf "${GREEN}[SUCCESS] Chatterbox updated successfully${NC}\n"
 
+# audio.cpp update. This only updates an existing install; CUDA/model setup is handled by install_audiocpp_pockettts.
+if [ -d /home/dwemer/audio.cpp/.git ]; then
+    cd /home/dwemer/audio.cpp
+    BRANCH=$(git branch --show-current)
+    print_header "UPDATING audio.cpp" "$BRANCH"
+
+    CURRENT_REMOTE=$(git config --get remote.origin.url)
+    TARGET_REMOTE="https://github.com/abeiro/audio.cpp"
+
+    if [ "$CURRENT_REMOTE" != "$TARGET_REMOTE" ]; then
+        print_warning "Setting remote to $TARGET_REMOTE"
+        git remote set-url origin $TARGET_REMOTE
+    fi
+
+    printf ">> Resetting repository...\n"
+    git reset --hard HEAD
+    printf ">> Pulling latest changes...\n"
+    git pull
+
+    sudo chown -R dwemer:dwemer /home/dwemer/audio.cpp
+    sudo chmod -R 755 /home/dwemer/audio.cpp
+    printf "${GREEN}[SUCCESS] audio.cpp updated successfully${NC}\n"
+fi
+
 # PocketTTS update
 if [ ! -d /home/dwemer/pocket-tts ];then
     cd /home/dwemer/
@@ -492,10 +516,10 @@ git reset --hard HEAD
 printf ">> Pulling latest changes...\n"
 git pull
 
-# Set permissions for LocalWhisper
+# Set permissions for PocketTTS
 sudo chown -R dwemer:dwemer /home/dwemer/pocket-tts
 sudo chmod -R 755 /home/dwemer/pocket-tts
-printf "${GREEN}[SUCCESS] Parakeet updated successfully${NC}\n"
+printf "${GREEN}[SUCCESS] PocketTTS updated successfully${NC}\n"
 
 # CHIM MCP Server update/install
 if [ ! -d /home/dwemer/CHIM-MCP ]; then

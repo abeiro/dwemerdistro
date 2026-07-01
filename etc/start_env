@@ -243,10 +243,20 @@ else
 	L_CHATTERBOX=1
 fi
 
-if [ -f /home/dwemer/pocket-tts/start.sh ];then
+POCKETTTS_PORT=8086
+if [ -f /home/dwemer/audio.cpp/start.sh ];then
+	echo -ne  "Starting PocketTTS audio.cpp"
+	su dwemer -c /home/dwemer/audio.cpp/start.sh
+	if ! check_port 8086; then
+		L_POCKETTTS=1
+	fi
+elif [ -f /home/dwemer/pocket-tts/start.sh ];then
+	POCKETTTS_PORT=8020
 	echo -ne  "Starting pocket-tts"
 	su dwemer -c /home/dwemer/pocket-tts/start.sh
-	check_port 8020
+	if ! check_port 8020; then
+		L_POCKETTTS=1
+	fi
 else
 	echo "Skipping pocket-tts (not enabled)"
 	L_POCKETTTS=1
@@ -389,7 +399,7 @@ if [ -z "$L_CHATTERBOX" ]; then
 fi
 
 if [ -z "$L_POCKETTTS" ]; then
-	echo PockeTTS API: http://$ipaddress:8020
+	echo PocketTTS API: http://$ipaddress:$POCKETTTS_PORT
 fi
 
 if [ -z "$L_MCPSERVER" ]; then
