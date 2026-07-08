@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+
+set -u
+
+MODE="repair"
+WEB_ROOT="/var/www/html"
+APP_USER="dwemer"
+WEB_USER="www-data"
+WEB_GROUP="www-data"
+CHECKED=0
+REPAIRED=0
+FAILED=0
+ISSUES=0
+
+usage() {
+    cat <<'EOF'
+Usage: fix_ddistro_permissions [--repair|--check]
+
+Checks or repairs DwemerDistro web-server writable folders.
+
+  --check    Report permission issues without changing files.
+  --repair   Repair runtime writable folders and restart Apache. Default.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --check)
+            MODE="check"
+            ;;
+        --repair)
+            MODE="repair"
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            printf '[FAIL] Unknown option: %s\n' "$1" >&2
+            usage >&2
+            exit 64
+            ;;
+    esac
+    shift
+done
+
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        exec sudo "$0" "--$MODE"
+    fi
+    printf '[FAIL] This tool must run as root.\n' >&2
+    exit 1
+fi
+
+if ! id "$APP_USER" >/dev/null 2>&1; then
+    printf '[FAIL] Required user missing: %s\n' "$APP_USER" >&2
+    exit 1
+fi
+
+if ! getent group "$WEB_GROUP" >/dev/null 2>&1; then
+    printf '[FAIL] Required group missing: %s\n' "$WEB_GROUP" >&2
+    exit 1
+fi
+
+if ! id "$WEB_USER" >/dev/null 2>&1; then
+    printf '[FAIL] Required web user missing: %s\n' "$WEB_USER" >&2
+    exit 1
+fi
+
+run_write_test() {
+    local user_name="$1"
+    local target_dir="$2"
+    local test_name=".ddistro_permission_test_$$"
+
+    if command -v runuser >/dev/null 2>&1; then
+        TEST_PATH="$target_dir" TEST_NAME="$test_name" runuser -u "$user_name" -- sh -c 'tmp="${TEST_PATH}/${TEST_NAME}"; : > "$tmp" && rm -f "$tmp"' >/dev/null 2>&1
+        return $?
+    fi
+
+    TEST_PATH="$target_dir" TEST_NAME="$test_name" su -s /bin/sh "$user_name" -c 'tmp="${TEST_PATH}/${TEST_NAME}"; : > "$tmp" && rm -f "$tmp"' >/dev/null 2>&1
+}
+
+mode_text() {
+    local target="$1"
+    if [ -e "$target" ]; then
+        stat -c '%U:%G %a' "$target" 2>/dev/null || printf 'unknown'
+    else
+        printf 'missing'
+    fi
+}
+
+repair_dir() {
+    local target="$1"
+
+    if [ "$MODE" != "repair" ]; then
+        return 0
+    fi
+
+    if ! mkdir -p "$target"; then
+        printf '[FAIL] Could not create %s\n' "$target"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+
+    if ! chown -R "$APP_USER:$WEB_GROUP" "$target"; then
+        printf '[FAIL] Could not set owner on %s\n' "$target"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+
+    if ! chmod -R ug+rwX,o-rwx "$target"; then
+        printf '[FAIL] Could not set mode on %s\n' "$target"
+        FAILED=$((FAILED + 1))
+        return 1
+    fi
+
+    find "$target" -type d -exec chmod g+s {} + >/dev/null 2>&1 || true
+    REPAIRED=$((REPAIRED + 1))
+    printf '[FIX] %s -> %s\n' "$target" "$(mode_text "$target")"
+    return 0
+}
+
+check_dir() {
+    local target="$1"
+    local before=""
+    local repaired_now=0
+    CHECKED=$((CHECKED + 1))
+
+    if [ ! -d "$target" ]; then
+        ISSUES=$((ISSUES + 1))
+        printf '[WARN] %s is missing\n' "$target"
+        repair_dir "$target" || return 1
+        repaired_now=1
+    fi
+
+    if [ ! -d "$target" ]; then
+        return 1
+    fi
+
+    before="$(mode_text "$target")"
+    if run_write_test "$APP_USER" "$target" && run_write_test "$WEB_USER" "$target"; then
+        printf '[OK] %s -> %s\n' "$target" "$before"
+        if [ "$MODE" != "repair" ]; then
+            return 0
+        fi
+    else
+        ISSUES=$((ISSUES + 1))
+        printf '[WARN] %s is not writable by %s and %s -> %s\n' "$target" "$APP_USER" "$WEB_USER" "$before"
+        if [ "$MODE" != "repair" ]; then
+            return 1
+        fi
+    fi
+
+    if [ "$MODE" = "repair" ] && [ "$repaired_now" -eq 0 ]; then
+        repair_dir "$target" || return 1
+    fi
+
+    if run_write_test "$APP_USER" "$target" && run_write_test "$WEB_USER" "$target"; then
+        printf '[OK] %s write test passed after repair\n' "$target"
+        return 0
+    fi
+
+    printf '[FAIL] %s is still not writable after repair -> %s\n' "$target" "$(mode_text "$target")"
+    FAILED=$((FAILED + 1))
+    return 1
+}
+
+repair_root_access() {
+    local root="$1"
+
+    if [ "$MODE" != "repair" ]; then
+        return 0
+    fi
+
+    chown "$APP_USER:$WEB_GROUP" "$root" >/dev/null 2>&1 || true
+    chmod ug+rwx,o+rx "$root" >/dev/null 2>&1 || true
+    chmod g+s "$root" >/dev/null 2>&1 || true
+}
+
+restart_apache() {
+    if [ "$MODE" != "repair" ]; then
+        return 0
+    fi
+
+    printf '[INFO] Restarting Apache...\n'
+    if command -v service >/dev/null 2>&1 && service apache2 restart >/dev/null 2>&1; then
+        printf '[OK] Apache restarted\n'
+        return 0
+    fi
+
+    if [ -x /etc/init.d/apache2 ] && /etc/init.d/apache2 restart >/dev/null 2>&1; then
+        printf '[OK] Apache restarted\n'
+        return 0
+    fi
+
+    printf '[WARN] Apache restart did not complete. Permissions were still repaired.\n'
+    return 0
+}
+
+check_permission_denied_logs() {
+    local apache_log="/var/log/apache2/error.log"
+    if [ -f "$apache_log" ]; then
+        printf '[INFO] Recent Apache permission-denied lines:\n'
+        grep -i 'permission denied' "$apache_log" 2>/dev/null | tail -n 10 || true
+    fi
+}
+
+repair_server() {
+    local root="$1"
+    shift
+
+    if [ ! -d "$root" ]; then
+        printf '[SKIP] %s is not installed\n' "$root"
+        return 0
+    fi
+
+    printf '\n== %s ==\n' "$root"
+    repair_root_access "$root"
+
+    for subdir in "$@"; do
+        check_dir "$root/$subdir" || true
+    done
+}
+
+printf 'DwemerDistro permission repair mode: %s\n' "$MODE"
+
+repair_server "$WEB_ROOT/HerikaServer" \
+    log logs cache tmp uploads data data/voices soundcache conf
+
+repair_server "$WEB_ROOT/StobeServer" \
+    log logs cache tmp uploads data soundcache conf
+
+repair_server "$WEB_ROOT/DialecticServer" \
+    log logs cache tmp uploads data soundcache conf
+
+repair_server "$WEB_ROOT/Dwemer-Dashboard" \
+    log logs cache tmp uploads
+
+check_permission_denied_logs
+restart_apache
+
+printf '\nSummary: checked=%s repaired=%s issues=%s failed=%s\n' "$CHECKED" "$REPAIRED" "$ISSUES" "$FAILED"
+
+if [ "$FAILED" -gt 0 ]; then
+    exit 1
+fi
+
+if [ "$MODE" = "check" ] && [ "$ISSUES" -gt 0 ]; then
+    exit 2
+fi
+
+exit 0
