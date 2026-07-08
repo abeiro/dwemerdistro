@@ -30,4 +30,4 @@ is_installed_component /home/dwemer/parakeet-api-server && /home/dwemer/parakeet
 is_installed_component /home/dwemer/chatterbox && /home/dwemer/chatterbox/conf.sh
 is_installed_audiocpp_pockettts /home/dwemer/audio.cpp && /home/dwemer/audio.cpp/conf.sh
 is_installed_component /home/dwemer/pocket-tts && /home/dwemer/pocket-tts/conf.sh
-
+is_installed_component /home/dwemer/omnivoice-tts && /home/dwemer/omnivoice-tts/conf.sh

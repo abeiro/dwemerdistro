@@ -521,6 +521,41 @@ sudo chown -R dwemer:dwemer /home/dwemer/pocket-tts
 sudo chmod -R 755 /home/dwemer/pocket-tts
 printf "${GREEN}[SUCCESS] PocketTTS updated successfully${NC}\n"
 
+# OmniVoice TTS update/install
+if [ ! -d /home/dwemer/omnivoice-tts ]; then
+    cd /home/dwemer/
+    git clone https://github.com/Dwemer-Dynamics/omnivoice-tts
+fi
+
+if [ -d /home/dwemer/omnivoice-tts ]; then
+    cd /home/dwemer/omnivoice-tts
+    BRANCH=$(git branch --show-current)
+    print_header "UPDATING OmniVoice TTS" "$BRANCH"
+
+    CURRENT_REMOTE=$(git config --get remote.origin.url)
+    TARGET_REMOTE="https://github.com/Dwemer-Dynamics/omnivoice-tts"
+
+    if [ "$CURRENT_REMOTE" != "$TARGET_REMOTE" ]; then
+        print_warning "Setting remote to $TARGET_REMOTE"
+        git remote set-url origin $TARGET_REMOTE
+    fi
+
+    printf ">> Resetting repository...\n"
+    git reset --hard HEAD
+    printf ">> Pulling latest changes...\n"
+    git pull
+
+    if [ -d /home/dwemer/omnivoice-tts/venv ]; then
+        OMNIVOICE_SKIP_DEPENDENCIES=1 OMNIVOICE_SKIP_DOCTOR=1 /home/dwemer/omnivoice-tts/ddistro_install.sh
+    else
+        OMNIVOICE_SKIP_DOCTOR=1 /home/dwemer/omnivoice-tts/ddistro_install.sh
+    fi
+
+    sudo chown -R dwemer:dwemer /home/dwemer/omnivoice-tts
+    sudo chmod -R 755 /home/dwemer/omnivoice-tts
+    printf "${GREEN}[SUCCESS] OmniVoice TTS updated successfully${NC}\n"
+fi
+
 # CHIM MCP Server update/install
 if [ ! -d /home/dwemer/CHIM-MCP ]; then
     print_header "INSTALLING DwemerDistro MCP SERVER"

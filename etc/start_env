@@ -295,6 +295,17 @@ else
 	L_XTTSV2=1
 fi
 
+if [ -f "/home/dwemer/omnivoice-tts/start-gpu.sh" ]; then
+	echo -ne  "Starting OmniVoice TTS "
+	su dwemer -c "/home/dwemer/omnivoice-tts/start-gpu.sh"
+	if ! check_port 8021; then
+		L_OMNIVOICE=1
+	fi
+else
+	echo "Skipping OmniVoice TTS (not installed)"
+	L_OMNIVOICE=1
+fi
+
 # Check if MCP is enabled (default: enabled if flag file missing)
 MCP_ENABLED=1
 if [ -f "/home/dwemer/.mcp_enabled" ]; then
@@ -378,6 +389,10 @@ if [ -z "$L_XTTSV2" ]; then
 	echo CHIM XTTS API: http://$ipaddress:8020
 fi
 
+if [ -z "$L_OMNIVOICE" ]; then
+	echo OmniVoice TTS API: http://$ipaddress:8021
+fi
+
 if [ -z "$L_MIMIC" ]; then
 	echo Mimic3 API: http://$ipaddress:59125
 fi
@@ -417,4 +432,3 @@ killall -15 -u dwemer
 /etc/init.d/postgresql stop
 
 echo "DwemerDistro has stopped running"
-
