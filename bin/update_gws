@@ -521,12 +521,7 @@ sudo chown -R dwemer:dwemer /home/dwemer/pocket-tts
 sudo chmod -R 755 /home/dwemer/pocket-tts
 printf "${GREEN}[SUCCESS] PocketTTS updated successfully${NC}\n"
 
-# OmniVoice TTS update/install
-if [ ! -d /home/dwemer/omnivoice-tts ]; then
-    cd /home/dwemer/
-    git clone https://github.com/Dwemer-Dynamics/omnivoice-tts
-fi
-
+# OmniVoice TTS update. Install remains an explicit launcher component action.
 if [ -d /home/dwemer/omnivoice-tts ]; then
     cd /home/dwemer/omnivoice-tts
     BRANCH=$(git branch --show-current)
@@ -554,6 +549,8 @@ if [ -d /home/dwemer/omnivoice-tts ]; then
     sudo chown -R dwemer:dwemer /home/dwemer/omnivoice-tts
     sudo chmod -R 755 /home/dwemer/omnivoice-tts
     printf "${GREEN}[SUCCESS] OmniVoice TTS updated successfully${NC}\n"
+else
+    printf "${YELLOW}[SKIP] OmniVoice TTS not installed; install it from DwemerDistro Installed Components.${NC}\n"
 fi
 
 # CHIM MCP Server update/install
