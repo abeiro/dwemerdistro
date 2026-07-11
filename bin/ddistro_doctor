@@ -1,0 +1,488 @@
+#!/usr/bin/env bash
+
+set -u
+
+MODE="check"
+WEB_ROOT="/var/www/html"
+HERIKA_ROOT="$WEB_ROOT/HerikaServer"
+APP_USER="dwemer"
+WEB_USER="www-data"
+WEB_GROUP="www-data"
+BACKGROUND_PORT=12345
+HERIKA_UI_PORT=8081
+XTTS_PORT=8020
+POSTGRES_PORT=5432
+
+CHECKED=0
+WARNINGS=0
+REPAIRED=0
+FAILED=0
+
+usage() {
+    cat <<'EOF'
+Usage: ddistro_doctor [--check|--repair]
+
+Checks or repairs common DwemerDistro runtime issues.
+
+  --check    Report distro, permission, service, port, and log issues. Default.
+  --repair   Apply safe repairs, then recheck critical services.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --check)
+            MODE="check"
+            ;;
+        --repair)
+            MODE="repair"
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            printf '[FAIL] Unknown option: %s\n' "$1" >&2
+            usage >&2
+            exit 64
+            ;;
+    esac
+    shift
+done
+
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        exec sudo "$0" "--$MODE"
+    fi
+    printf '[FAIL] This tool must run as root.\n' >&2
+    exit 1
+fi
+
+info() {
+    printf '[INFO] %s\n' "$*"
+}
+
+ok() {
+    CHECKED=$((CHECKED + 1))
+    printf '[OK] %s\n' "$*"
+}
+
+warn() {
+    WARNINGS=$((WARNINGS + 1))
+    printf '[WARN] %s\n' "$*"
+}
+
+fix() {
+    REPAIRED=$((REPAIRED + 1))
+    printf '[FIX] %s\n' "$*"
+}
+
+fail() {
+    FAILED=$((FAILED + 1))
+    printf '[FAIL] %s\n' "$*"
+}
+
+have_cmd() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+doctor_helper_path() {
+    if [ -x /usr/local/bin/fix_ddistro_permissions ]; then
+        printf '%s\n' '/usr/local/bin/fix_ddistro_permissions'
+        return 0
+    fi
+    if [ -f /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions ]; then
+        printf '%s\n' '/home/dwemer/dwemerdistro/bin/fix_ddistro_permissions'
+        return 0
+    fi
+    return 1
+}
+
+run_helper() {
+    local helper="$1"
+    shift
+
+    if [ -x "$helper" ]; then
+        "$helper" "$@"
+        return $?
+    fi
+
+    bash "$helper" "$@"
+}
+
+port_open() {
+    local port="$1"
+
+    if have_cmd nc; then
+        nc -z 127.0.0.1 "$port" >/dev/null 2>&1
+        return $?
+    fi
+
+    if have_cmd ss; then
+        ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)$port$"
+        return $?
+    fi
+
+    timeout 1 bash -c ":</dev/tcp/127.0.0.1/$port" >/dev/null 2>&1
+}
+
+install_package() {
+    local package="$1"
+
+    if [ "$MODE" != "repair" ]; then
+        return 1
+    fi
+
+    if ! have_cmd apt-get; then
+        fail "apt-get unavailable; cannot install $package"
+        return 1
+    fi
+
+    info "Installing missing package: $package"
+    if DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 &&
+        DEBIAN_FRONTEND=noninteractive apt-get -y install "$package" >/dev/null 2>&1; then
+        fix "Installed $package"
+        return 0
+    fi
+
+    fail "Could not install $package"
+    return 1
+}
+
+check_identity() {
+    info "Checking required users and groups"
+
+    if id "$APP_USER" >/dev/null 2>&1; then
+        ok "User exists: $APP_USER"
+    else
+        fail "Required user missing: $APP_USER"
+    fi
+
+    if id "$WEB_USER" >/dev/null 2>&1; then
+        ok "Web user exists: $WEB_USER"
+    else
+        fail "Required web user missing: $WEB_USER"
+    fi
+
+    if getent group "$WEB_GROUP" >/dev/null 2>&1; then
+        ok "Web group exists: $WEB_GROUP"
+    else
+        fail "Required web group missing: $WEB_GROUP"
+    fi
+}
+
+check_dependency() {
+    local command_name="$1"
+    local package_name="${2:-}"
+    local critical="${3:-0}"
+
+    if have_cmd "$command_name"; then
+        ok "Dependency available: $command_name"
+        return 0
+    fi
+
+    warn "Dependency missing: $command_name"
+    if [ "$MODE" = "repair" ] && [ -n "$package_name" ]; then
+        install_package "$package_name"
+        if have_cmd "$command_name"; then
+            ok "Dependency available after repair: $command_name"
+            return 0
+        fi
+    fi
+
+    if [ "$critical" = "1" ]; then
+        fail "Critical dependency unavailable: $command_name"
+    fi
+    return 1
+}
+
+check_dependencies() {
+    info "Checking runtime dependencies"
+    check_dependency bash "" 1
+    check_dependency php "" 1
+    check_dependency nc netcat-openbsd 1
+    check_dependency curl "" 0
+    check_dependency git "" 0
+    check_dependency service "" 0
+    check_dependency psql "" 0
+    check_dependency pg_isready "" 0
+
+    if have_cmd php; then
+        if php -m 2>/dev/null | grep -qx 'pcntl'; then
+            ok "PHP pcntl extension available"
+        else
+            fail "PHP pcntl extension missing; service manager cannot fork background tasks"
+        fi
+    fi
+}
+
+check_permissions() {
+    info "Checking runtime permissions"
+
+    local helper
+    if ! helper="$(doctor_helper_path)"; then
+        if [ "$MODE" = "repair" ]; then
+            fail "fix_ddistro_permissions is not installed. Run Update System first."
+        else
+            warn "fix_ddistro_permissions is not installed"
+        fi
+        return
+    fi
+
+    if [ "$MODE" = "repair" ]; then
+        run_helper "$helper" --repair
+        local rc=$?
+        if [ "$rc" -eq 0 ]; then
+            ok "Permission repair completed"
+        else
+            fail "Permission repair failed with exit code $rc"
+        fi
+    else
+        run_helper "$helper" --check
+        local rc=$?
+        if [ "$rc" -eq 0 ]; then
+            ok "Permission check passed"
+        elif [ "$rc" -eq 2 ]; then
+            warn "Permission check reported writable folder issues"
+        else
+            fail "Permission check failed with exit code $rc"
+        fi
+    fi
+}
+
+check_apache() {
+    info "Checking Apache"
+
+    if ! have_cmd service; then
+        warn "service command unavailable; cannot check Apache"
+        return
+    fi
+
+    if service apache2 status >/dev/null 2>&1; then
+        ok "Apache service is running"
+        return
+    fi
+
+    warn "Apache service is not running"
+    if [ "$MODE" = "repair" ]; then
+        if service apache2 restart >/dev/null 2>&1; then
+            fix "Restarted Apache"
+            if service apache2 status >/dev/null 2>&1; then
+                ok "Apache service is running after repair"
+            else
+                fail "Apache restart returned success, but service is still not running"
+            fi
+        else
+            fail "Apache restart failed"
+        fi
+    fi
+}
+
+check_postgres() {
+    info "Checking PostgreSQL"
+
+    if have_cmd pg_isready && pg_isready -h 127.0.0.1 -p "$POSTGRES_PORT" >/dev/null 2>&1; then
+        ok "PostgreSQL is accepting connections on $POSTGRES_PORT"
+        return
+    fi
+
+    warn "PostgreSQL is not accepting connections on $POSTGRES_PORT"
+    if [ "$MODE" = "repair" ] && have_cmd service; then
+        if service postgresql start >/dev/null 2>&1; then
+            fix "Started PostgreSQL"
+            if have_cmd pg_isready && pg_isready -h 127.0.0.1 -p "$POSTGRES_PORT" >/dev/null 2>&1; then
+                ok "PostgreSQL is accepting connections after repair"
+            else
+                warn "PostgreSQL still does not answer pg_isready after service start"
+            fi
+        else
+            warn "PostgreSQL service start failed"
+        fi
+    fi
+}
+
+check_port_report() {
+    local label="$1"
+    local port="$2"
+    local severity="${3:-warn}"
+
+    if port_open "$port"; then
+        ok "$label is listening on 127.0.0.1:$port"
+        return 0
+    fi
+
+    if [ "$severity" = "fail" ]; then
+        fail "$label is not listening on 127.0.0.1:$port"
+    else
+        warn "$label is not listening on 127.0.0.1:$port"
+    fi
+    return 1
+}
+
+check_background_service() {
+    info "Checking Herika background processor / Background Life"
+
+    if [ ! -d "$HERIKA_ROOT" ]; then
+        warn "$HERIKA_ROOT is not installed"
+        return
+    fi
+
+    local start_script="$HERIKA_ROOT/service/start.sh"
+    local manager_script="$HERIKA_ROOT/service/manager.php"
+
+    if [ ! -f "$start_script" ]; then
+        fail "Background processor start script missing: $start_script"
+        return
+    fi
+
+    if [ ! -f "$manager_script" ]; then
+        fail "Background processor manager missing: $manager_script"
+        return
+    fi
+
+    if [ "$MODE" = "repair" ]; then
+        chmod +x "$start_script" >/dev/null 2>&1 || true
+    fi
+
+    if port_open "$BACKGROUND_PORT"; then
+        ok "Background processor is listening on 127.0.0.1:$BACKGROUND_PORT"
+        return
+    fi
+
+    warn "Background processor is not listening on 127.0.0.1:$BACKGROUND_PORT"
+
+    local stale
+    stale="$(pgrep -f "$HERIKA_ROOT/service/start.sh" 2>/dev/null || true)"
+    if [ -n "$stale" ]; then
+        warn "Found Herika background start process without a listening heartbeat: $stale"
+        if [ "$MODE" = "repair" ]; then
+            pkill -f "$HERIKA_ROOT/service/start.sh" >/dev/null 2>&1 || true
+            fix "Stopped stale Herika background start process"
+            sleep 1
+        fi
+    fi
+
+    if [ "$MODE" != "repair" ]; then
+        return
+    fi
+
+    if ! have_cmd nc; then
+        fail "Cannot start background processor because nc is missing"
+        return
+    fi
+
+    info "Starting Herika background processor"
+    nohup bash "$start_script" >/dev/null 2>&1 < /dev/null &
+
+    local attempt=0
+    while [ "$attempt" -lt 30 ]; do
+        sleep 0.2
+        if port_open "$BACKGROUND_PORT"; then
+            fix "Started Herika background processor"
+            ok "Background processor is listening after repair"
+            return
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    fail "Background processor did not start or did not bind port $BACKGROUND_PORT"
+    tail_known_log "$HERIKA_ROOT/log/service.log" 20
+    tail_known_log "$HERIKA_ROOT/log/manager.log" 20
+}
+
+tail_known_log() {
+    local path="$1"
+    local lines="${2:-20}"
+
+    if [ -f "$path" ]; then
+        info "Last $lines lines from $path"
+        tail -n "$lines" "$path" 2>/dev/null | sed 's/^/  /'
+    else
+        warn "Log missing: $path"
+    fi
+}
+
+check_ports() {
+    info "Checking common service ports"
+    check_port_report "Herika/Dwemer web UI" "$HERIKA_UI_PORT" warn
+    check_port_report "XTTS FastAPI" "$XTTS_PORT" warn
+}
+
+check_disk() {
+    info "Checking disk space"
+
+    if ! have_cmd df; then
+        warn "df unavailable; cannot check disk usage"
+        return
+    fi
+
+    df -h "$WEB_ROOT" / 2>/dev/null | awk 'NR == 1 || !seen[$1]++ {print}' | sed 's/^/[INFO] disk: /'
+
+    while read -r filesystem blocks used available pct mountpoint; do
+        case "$pct" in
+            Use%|'')
+                continue
+                ;;
+        esac
+        local pct_num="${pct%%%}"
+        if [ "$pct_num" -ge 97 ] 2>/dev/null; then
+            fail "Disk critically full on $mountpoint: $pct used"
+        elif [ "$pct_num" -ge 90 ] 2>/dev/null; then
+            warn "Disk nearly full on $mountpoint: $pct used"
+        else
+            ok "Disk usage acceptable on $mountpoint: $pct used"
+        fi
+done <<EOF
+$(df -P "$WEB_ROOT" / 2>/dev/null | awk 'NR > 1 && !seen[$1]++ {print}')
+EOF
+}
+
+scan_log_for_patterns() {
+    local path="$1"
+    local label="$2"
+    local pattern='Permission denied|fsockopen.*12345|main semaphore wait failed|wait loop break after 301 sec|Invalid JSON Output|LLM returned invalid output|Error, timeout|HTTP/1\.1 500|Background processor failed|shell_exec unavailable|start script missing'
+
+    if [ ! -f "$path" ]; then
+        warn "$label log missing: $path"
+        return
+    fi
+
+    local matches
+    matches="$(tail -n 5000 "$path" 2>/dev/null | grep -Ei "$pattern" | tail -n 12 || true)"
+    if [ -n "$matches" ]; then
+        warn "$label has recent suspicious lines"
+        printf '%s\n' "$matches" | sed 's/^/  /'
+    else
+        ok "$label has no suspicious lines in recent tail"
+    fi
+}
+
+check_recent_logs() {
+    info "Scanning recent logs"
+    scan_log_for_patterns "$HERIKA_ROOT/log/chim.log" "Herika chim.log"
+    scan_log_for_patterns "$HERIKA_ROOT/log/service.log" "Herika service.log"
+    scan_log_for_patterns "$HERIKA_ROOT/log/manager.log" "Herika manager.log"
+    scan_log_for_patterns "$HERIKA_ROOT/log/relationship_worker.log" "Relationship worker"
+    scan_log_for_patterns "/var/log/apache2/error.log" "Apache error.log"
+}
+
+printf 'DwemerDistro Doctor mode: %s\n' "$MODE"
+printf 'Generated: %s\n' "$(date -Is 2>/dev/null || date)"
+
+check_identity
+check_dependencies
+check_disk
+check_permissions
+check_apache
+check_postgres
+check_background_service
+check_ports
+check_recent_logs
+
+printf '\nSummary: checked=%s repaired=%s warnings=%s failed=%s\n' "$CHECKED" "$REPAIRED" "$WARNINGS" "$FAILED"
+
+if [ "$MODE" = "repair" ] && [ "$FAILED" -gt 0 ]; then
+    exit 1
+fi
+
+exit 0
