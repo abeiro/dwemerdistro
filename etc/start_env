@@ -88,6 +88,53 @@ EOF
     a2ensite stobe.conf >/dev/null 2>&1 || true
 }
 
+ensure_dialectic_apache_vhost() {
+    local ports_conf="/etc/apache2/ports.conf"
+    local dialectic_conf="/etc/apache2/sites-available/dialectic.conf"
+
+    if ! grep -Eq '^[[:space:]]*Listen[[:space:]]+([^:[:space:]]+:)?8088([[:space:]]|$)' "$ports_conf"; then
+        echo "Listen 0.0.0.0:8088" >> "$ports_conf"
+    fi
+
+    cat > "$dialectic_conf" << 'EOF'
+<VirtualHost *:8088>
+	ServerAdmin webmaster@localhost
+	DocumentRoot /var/www/html
+	Alias /DialecticServer /var/www/html/DialecticServer
+
+	<Directory /var/www/html>
+		Options -Indexes +FollowSymLinks
+		AllowOverride All
+		Require all granted
+	</Directory>
+
+	<Directory /var/www/html/DialecticServer>
+		Options -Indexes +FollowSymLinks
+		AllowOverride All
+		Require all granted
+	</Directory>
+
+	<Directory /var/www/html/DialecticServer/soundcache>
+		Options +Indexes +FollowSymLinks
+		AllowOverride None
+		Require all granted
+	</Directory>
+
+	<Directory /var/www/html/DialecticServer/ui/images>
+		Options +Indexes +FollowSymLinks
+		AllowOverride None
+		Require all granted
+	</Directory>
+
+	ErrorLog ${APACHE_LOG_DIR}/dialectic_error.log
+	CustomLog ${APACHE_LOG_DIR}/dialectic_access.log combined
+	LimitRequestLine 65535
+</VirtualHost>
+EOF
+
+    a2ensite dialectic.conf >/dev/null 2>&1 || true
+}
+
 ensure_stobe_database() {
     local schema_path="/var/www/html/StobeServer/data/schema.sql"
     local db_exists=""
@@ -148,6 +195,83 @@ ensure_stobe_database() {
     return 0
 }
 
+ensure_dialectic_database() {
+    local server_root="/var/www/html/DialecticServer"
+    local baseline="$server_root/data/database_default.sql"
+    local db_exists=""
+    local schema_ready=""
+    local bootstrap_output="/tmp/dialectic_startup_database_bootstrap.out"
+
+    if [ ! -d "$server_root" ]; then
+        echo "Skipping DialecticServer DB bootstrap (DialecticServer not installed)."
+        return 0
+    fi
+
+    export PGPASSWORD=dwemer
+    db_exists=$(psql -h localhost -U dwemer -tAc "SELECT 1 FROM pg_database WHERE datname = 'dialectic' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+    if [ "$db_exists" != "1" ]; then
+        echo "Creating DialecticServer database..."
+        if ! createdb -h localhost -U dwemer -O dwemer dialectic >/dev/null 2>&1; then
+            echo "WARNING: Failed to create dialectic database."
+            unset PGPASSWORD
+            return 1
+        fi
+    fi
+
+    if ! sudo -u postgres psql -d dialectic -c "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS vector; ALTER DATABASE dialectic OWNER TO dwemer;" >/dev/null 2>&1; then
+        echo "WARNING: Failed to provision Dialectic PostgreSQL extensions."
+        unset PGPASSWORD
+        return 1
+    fi
+
+    schema_ready=$(psql -h localhost -U dwemer -d dialectic -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='eventlog' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+    if [ "$schema_ready" != "1" ]; then
+        if [ ! -f "$baseline" ] || ! psql -h localhost -U dwemer -d dialectic -f "$baseline" >"$bootstrap_output" 2>&1; then
+            echo "WARNING: Failed to apply the Dialectic database baseline. See $bootstrap_output"
+            unset PGPASSWORD
+            return 1
+        fi
+    fi
+
+    if ! php "$server_root/tools/bootstrap-database.php" >"$bootstrap_output" 2>&1; then
+        mkdir -p "$server_root/log" >/dev/null 2>&1 || true
+        cp "$bootstrap_output" "$server_root/log/db_update_runner.log" 2>/dev/null || true
+        echo "WARNING: Dialectic database bootstrap failed. See $server_root/log/db_update_runner.log"
+        unset PGPASSWORD
+        return 1
+    fi
+
+    rm -f "$bootstrap_output"
+    unset PGPASSWORD
+    echo "DialecticServer database ready."
+    return 0
+}
+
+ensure_dialectic_runtime() {
+    local server_root="/var/www/html/DialecticServer"
+    local start_script="$server_root/service/start.sh"
+
+    if [ ! -f "$start_script" ]; then
+        return 0
+    fi
+
+    mkdir -p "$server_root/log" "$server_root/soundcache" "$server_root/uploads"
+    chown -R dwemer:www-data "$server_root/log" "$server_root/soundcache" "$server_root/uploads" >/dev/null 2>&1 || true
+    chmod 2775 "$server_root/log" "$server_root/soundcache" "$server_root/uploads" >/dev/null 2>&1 || true
+
+    if ! nc -z 127.0.0.1 12347 >/dev/null 2>&1; then
+        echo "Starting DialecticServer background processor..."
+        su dwemer -c "nohup bash '$start_script' >/dev/null 2>&1 </dev/null &"
+        sleep 1
+    fi
+
+    if nc -z 127.0.0.1 12347 >/dev/null 2>&1; then
+        echo "DialecticServer background processor ready."
+    else
+        echo "WARNING: DialecticServer background processor is not listening on port 12347."
+    fi
+}
+
 ensure_herika_log_permissions() {
     local herika_root="/var/www/html/HerikaServer"
     local log_dir="${herika_root}/log"
@@ -177,6 +301,7 @@ ensure_herika_log_permissions() {
 }
 
 ensure_stobe_apache_vhost
+ensure_dialectic_apache_vhost
 ensure_herika_log_permissions
 
 # Start Apache/PHP server
@@ -188,10 +313,21 @@ if ! ensure_stobe_database; then
     echo "WARNING: StobeServer may not be fully initialized."
 fi
 
+if ! ensure_dialectic_database; then
+    echo "WARNING: DialecticServer may not be fully initialized."
+fi
+
+ensure_dialectic_runtime
+
 # Create symbolic link for Apache error log if it doesn't exist
 if [ ! -e "/var/www/html/HerikaServer/log/apache_error.log" ]; then
   mkdir -p /var/www/html/HerikaServer/log/
   ln -sf /var/log/apache2/error.log /var/www/html/HerikaServer/log/apache_error.log
+fi
+
+if [ -d "/var/www/html/DialecticServer" ] && [ ! -e "/var/www/html/DialecticServer/log/apache_error.log" ]; then
+  mkdir -p /var/www/html/DialecticServer/log/
+  ln -sf /var/log/apache2/dialectic_error.log /var/www/html/DialecticServer/log/apache_error.log
 fi
 
 if [ -f  "/home/dwemer/minime-t5/start.sh" ]; then
@@ -295,6 +431,17 @@ else
 	L_XTTSV2=1
 fi
 
+if [ -f "/home/dwemer/omnivoice-tts/start-gpu.sh" ]; then
+	echo -ne  "Starting OmniVoice TTS "
+	su dwemer -c "/home/dwemer/omnivoice-tts/start-gpu.sh"
+	if ! check_port 8021; then
+		L_OMNIVOICE=1
+	fi
+else
+	echo "Skipping OmniVoice TTS (not installed)"
+	L_OMNIVOICE=1
+fi
+
 # Check if MCP is enabled (default: enabled if flag file missing)
 MCP_ENABLED=1
 if [ -f "/home/dwemer/.mcp_enabled" ]; then
@@ -362,6 +509,7 @@ Windows Host IP: $host_ip
 WSL2 Internal IP: $wsl_ip 
 HerikaServer: http://$ipaddress:8081/HerikaServer
 StobeServer: http://$ipaddress:8083/StobeServer
+DialecticServer: http://$ipaddress:8088/DialecticServer
 
 Running Components:
 EOF
@@ -376,6 +524,10 @@ fi
 
 if [ -z "$L_XTTSV2" ]; then
 	echo CHIM XTTS API: http://$ipaddress:8020
+fi
+
+if [ -z "$L_OMNIVOICE" ]; then
+	echo OmniVoice TTS API: http://$ipaddress:8021
 fi
 
 if [ -z "$L_MIMIC" ]; then
@@ -417,4 +569,3 @@ killall -15 -u dwemer
 /etc/init.d/postgresql stop
 
 echo "DwemerDistro has stopped running"
-
