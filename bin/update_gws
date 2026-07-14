@@ -10,6 +10,7 @@ NC='\033[0m' # No Color
 PASSWORD="dwemer"
 UPDATE_HERIKA=1
 UPDATE_STOBE=1
+UPDATE_DIALECTIC=1
 
 # Helper function for section headers
 print_header() {
@@ -181,6 +182,129 @@ ensure_stobe_database() {
     return 0
 }
 
+restore_dialectic_runtime_state() {
+    local backup_path="$1"
+    local repo_path="/var/www/html/DialecticServer"
+    local relative_path=""
+
+    for relative_path in conf/conf.php conf/character_map.json; do
+        if [ -e "$backup_path/$relative_path" ]; then
+            mkdir -p "$repo_path/$(dirname "$relative_path")"
+            cp -a "$backup_path/$relative_path" "$repo_path/$relative_path"
+        fi
+    done
+
+    for relative_path in uploads data/voices soundcache log; do
+        if [ -d "$backup_path/$relative_path" ]; then
+            mkdir -p "$repo_path/$relative_path"
+            cp -a "$backup_path/$relative_path/." "$repo_path/$relative_path/"
+        fi
+    done
+
+    if [ -d "$backup_path/conf" ]; then
+        find "$backup_path/conf" -maxdepth 1 -type f -name 'conf_*.php' -exec cp -a {} "$repo_path/conf/" \;
+    fi
+}
+
+ensure_dialectic_repo_exists() {
+    local target_branch="${1:-dialectic}"
+    local repo_path="/var/www/html/DialecticServer"
+    local backup_path=""
+
+    mkdir -p /var/www/html >/dev/null 2>&1 || true
+
+    if [ -d "$repo_path" ] && [ ! -d "$repo_path/.git" ]; then
+        backup_path="${repo_path}.pre-git-$(date -u '+%Y%m%d%H%M%S')"
+        print_warning "Found a manually deployed DialecticServer. Moving it to $backup_path before installing the managed repository."
+        if ! mv "$repo_path" "$backup_path"; then
+            print_warning "Failed to back up the existing DialecticServer directory."
+            return 1
+        fi
+    fi
+
+    if [ ! -d "$repo_path/.git" ]; then
+        print_header "INSTALLING DIALECTIC SERVER" "$target_branch"
+        cd /var/www/html || return 1
+        if ! git clone -b "$target_branch" https://github.com/Dwemer-Dynamics/DialecticServer.git DialecticServer; then
+            print_warning "Failed to clone DialecticServer repository."
+            rm -rf "$repo_path"
+            if [ -n "$backup_path" ] && [ -d "$backup_path" ]; then
+                mv "$backup_path" "$repo_path"
+                print_warning "Restored the previous manually deployed DialecticServer."
+            fi
+            return 1
+        fi
+        DIALECTIC_INITIAL_INSTALL=1
+
+        if [ -n "$backup_path" ] && [ -d "$backup_path" ]; then
+            restore_dialectic_runtime_state "$backup_path"
+            print_success "Restored DialecticServer configuration, voices, uploads, cache, and logs. Backup retained at $backup_path"
+        fi
+    fi
+
+    [ -d "$repo_path/.git" ]
+}
+
+ensure_dialectic_database() {
+    local server_root="/var/www/html/DialecticServer"
+    local baseline="$server_root/data/database_default.sql"
+    local db_exists=""
+    local schema_ready=""
+    local bootstrap_output="/tmp/dialectic_database_bootstrap.out"
+
+    print_header "ENSURING DIALECTIC DATABASE"
+    if [ ! -d "$server_root" ]; then
+        print_warning "DialecticServer directory not found; skipping database provisioning."
+        return 1
+    fi
+
+    export PGPASSWORD=dwemer
+    db_exists=$(psql -h localhost -U dwemer -tAc "SELECT 1 FROM pg_database WHERE datname = 'dialectic' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+    if [ "$db_exists" != "1" ]; then
+        printf ">> Creating dialectic database...\n"
+        if ! createdb -h localhost -U dwemer -O dwemer dialectic >/dev/null 2>&1; then
+            print_warning "Failed to create dialectic database."
+            unset PGPASSWORD
+            return 1
+        fi
+    fi
+
+    if ! echo "$PASSWORD" | sudo -S -u postgres psql -d dialectic -c "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS vector; ALTER DATABASE dialectic OWNER TO dwemer;" >/dev/null 2>&1; then
+        print_warning "Failed to provision Dialectic PostgreSQL extensions."
+        unset PGPASSWORD
+        return 1
+    fi
+
+    schema_ready=$(psql -h localhost -U dwemer -d dialectic -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='eventlog' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+    if [ "$schema_ready" != "1" ]; then
+        if [ ! -f "$baseline" ]; then
+            print_warning "Dialectic database baseline is missing: $baseline"
+            unset PGPASSWORD
+            return 1
+        fi
+        printf ">> Importing Dialectic database baseline...\n"
+        if ! psql -h localhost -U dwemer -d dialectic -f "$baseline" >"$bootstrap_output" 2>&1; then
+            print_warning "Failed to import the Dialectic database baseline. See $bootstrap_output"
+            unset PGPASSWORD
+            return 1
+        fi
+    fi
+
+    printf ">> Running Dialectic database migrations and seed verification...\n"
+    if ! php "$server_root/tools/bootstrap-database.php" >"$bootstrap_output" 2>&1; then
+        mkdir -p "$server_root/log" >/dev/null 2>&1 || true
+        cp "$bootstrap_output" "$server_root/log/db_update_runner.log" 2>/dev/null || true
+        print_warning "Dialectic database bootstrap failed. See $server_root/log/db_update_runner.log"
+        unset PGPASSWORD
+        return 1
+    fi
+
+    rm -f "$bootstrap_output"
+    unset PGPASSWORD
+    print_success "Dialectic database is ready."
+    return 0
+}
+
 # Optional selective server updates.
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -189,6 +313,9 @@ while [ $# -gt 0 ]; do
             ;;
         --skip-stobe)
             UPDATE_STOBE=0
+            ;;
+        --skip-dialectic)
+            UPDATE_DIALECTIC=0
             ;;
         *)
             print_warning "Unknown option '$1' ignored"
@@ -259,6 +386,33 @@ if [ "$UPDATE_STOBE" -eq 1 ]; then
     fi
 else
     print_warning "Skipping StobeServer update by request"
+fi
+
+if [ "$UPDATE_DIALECTIC" -eq 1 ]; then
+    DIALECTIC_INITIAL_INSTALL=0
+    if ensure_dialectic_repo_exists "dialectic"; then
+        cd /var/www/html/DialecticServer || true
+        if [ "$DIALECTIC_INITIAL_INSTALL" -eq 0 ]; then
+            BRANCH=$(git branch --show-current)
+            print_header "UPDATING DIALECTIC SERVER" "$BRANCH"
+            printf ">> Resetting repository...\n"
+            git reset --hard HEAD
+            printf ">> Pulling latest changes...\n"
+            git pull --ff-only
+        fi
+
+        echo "$PASSWORD" | sudo -S chown -R dwemer:www-data /var/www/html/DialecticServer
+        echo "$PASSWORD" | sudo -S chmod -R 775 /var/www/html/DialecticServer
+        if ensure_dialectic_database; then
+            print_success "DialecticServer updated successfully"
+        else
+            print_warning "DialecticServer updated, but database provisioning was incomplete."
+        fi
+    else
+        print_warning "DialecticServer repository setup failed; skipping DialecticServer update."
+    fi
+else
+    print_warning "Skipping DialecticServer update by request"
 fi
 
 # Dwemer Dashboard update/install
@@ -554,116 +708,7 @@ else
 fi
 
 # CHIM MCP Server update/install
-if [ ! -d /home/dwemer/CHIM-MCP ]; then
-    print_header "INSTALLING DwemerDistro MCP SERVER"
-    cd /home/dwemer/
-    git clone https://github.com/Dwemer-Dynamics/CHIM-MCP.git
-fi
-
-if [ -d /home/dwemer/CHIM-MCP ]; then
-    mcp_failed=0
-    cd /home/dwemer/CHIM-MCP
-    BRANCH=$(git branch --show-current)
-    print_header "UPDATING DwemerDistro MCP SERVER" "$BRANCH"
-    
-    printf ">> Resetting repository...\n"
-    if ! git reset --hard HEAD; then
-        print_warning "DwemerDistro MCP reset failed."
-        mcp_failed=1
-    fi
-    printf ">> Pulling latest changes...\n"
-    if ! git pull; then
-        print_warning "DwemerDistro MCP pull failed."
-        mcp_failed=1
-    fi
-    
-    # Install/update npm dependencies and build
-    if [ -f "package.json" ]; then
-        refresh_node_paths() {
-            npm_path=$(command -v npm 2>/dev/null || true)
-            node_path=$(command -v node 2>/dev/null || true)
-        }
-
-        windows_node_toolchain_detected() {
-            [ -z "$npm_path" ] || [ -z "$node_path" ] || [[ "$npm_path" == /mnt/c/* ]] || [[ "$npm_path" == *.cmd ]] || [[ "$node_path" == /mnt/c/* ]] || [[ "$node_path" == *.exe ]]
-        }
-
-        refresh_node_paths
-        node_toolchain_ready=1
-
-        if windows_node_toolchain_detected; then
-            print_warning "DwemerDistro MCP resolved missing/Windows npm-node inside WSL. Attempting Linux nodejs/npm install."
-            if ! echo $PASSWORD | sudo -S apt-get update || ! echo $PASSWORD | sudo -S apt-get -y install nodejs npm; then
-                print_warning "DwemerDistro MCP could not auto-install Linux nodejs/npm."
-                node_toolchain_ready=0
-                mcp_failed=1
-            else
-                refresh_node_paths
-                if windows_node_toolchain_detected; then
-                    print_warning "DwemerDistro MCP still resolves to missing/Windows npm-node after install."
-                    print_warning "Ensure WSL PATH prefers /usr/bin for node/npm."
-                    node_toolchain_ready=0
-                    mcp_failed=1
-                fi
-            fi
-        fi
-
-        if [ "$node_toolchain_ready" -eq 1 ]; then
-            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
-
-            install_success=0
-            for attempt in 1 2; do
-                printf ">> Installing dependencies...\n"
-                if [ -f "package-lock.json" ]; then
-                    npm ci && install_success=1 && break
-                else
-                    npm install && install_success=1 && break
-                fi
-                if [ "$attempt" -eq 1 ]; then
-                    print_warning "DwemerDistro MCP dependency install failed. Retry    ing after cleanup."
-                    rm -rf node_modules
-                fi
-            done
-
-            if [ "$install_success" -eq 0 ]; then
-                print_warning "DwemerDistro MCP dependency install failed after retry."
-                mcp_failed=1
-            fi
-
-            if [ "$mcp_failed" -eq 0 ]; then
-                build_success=0
-                for attempt in 1 2; do
-                    printf ">> Building TypeScript...\n"
-                    npm run build && build_success=1 && break
-                    if [ "$attempt" -eq 1 ]; then
-                        print_warning "DwemerDistro MCP TypeScript build failed. Retrying once."
-                    fi
-                done
-                if [ "$build_success" -eq 0 ]; then
-                    print_warning "DwemerDistro MCP TypeScript build failed after retry."
-                    mcp_failed=1
-                fi
-            fi
-
-            if [ "$mcp_failed" -eq 0 ] && [ ! -f "dist/index.js" ]; then
-                print_warning "DwemerDistro MCP build did not produce dist/index.js"
-                mcp_failed=1
-            fi
-        fi
-    else
-        print_warning "DwemerDistro MCP package.json not found. Skipping MCP build."
-        mcp_failed=1
-    fi
-    
-    # Set permissions
-    sudo chown -R dwemer:dwemer /home/dwemer/CHIM-MCP
-    sudo chmod -R 755 /home/dwemer/CHIM-MCP
-    if [ "$mcp_failed" -eq 0 ]; then
-        printf "${GREEN}[SUCCESS] DwemerDistro MCP Server updated successfully${NC}\n"
-    else
-        print_warning "DwemerDistro MCP update had warnings and was not fully completed. Continuing."
-    fi
-fi
+print_warning "Skipping DwemerDistro MCP update for now."
 
 # System permission updates
 print_header "RUNNING SYSTEM PERMISSION UPDATES"
@@ -671,8 +716,12 @@ print_header "RUNNING SYSTEM PERMISSION UPDATES"
 sudo /usr/local/bin/update_perms
 printf "${GREEN}[SUCCESS] System permissions updated${NC}\n"
 
-# Install netcat, needed for service daemon
-sudo apt-get update && sudo apt-get -y install netcat-openbsd
+# Install netcat only when missing; apt is slow and should not run on every update.
+if ! command -v nc >/dev/null 2>&1; then
+    sudo apt-get update && sudo apt-get -y install netcat-openbsd
+else
+    printf "${GREEN}[SUCCESS] netcat already installed${NC}\n"
+fi
 
 # Final message
 printf "\n${BOLD}=======================================================${NC}\n"

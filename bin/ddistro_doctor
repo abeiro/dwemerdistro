@@ -5,11 +5,14 @@ set -u
 MODE="check"
 WEB_ROOT="/var/www/html"
 HERIKA_ROOT="$WEB_ROOT/HerikaServer"
+DIALECTIC_ROOT="$WEB_ROOT/DialecticServer"
 APP_USER="dwemer"
 WEB_USER="www-data"
 WEB_GROUP="www-data"
 BACKGROUND_PORT=12345
+DIALECTIC_BACKGROUND_PORT=12347
 HERIKA_UI_PORT=8081
+DIALECTIC_UI_PORT=8088
 XTTS_PORT=8020
 POSTGRES_PORT=5432
 
@@ -390,6 +393,53 @@ check_background_service() {
     tail_known_log "$HERIKA_ROOT/log/manager.log" 20
 }
 
+check_dialectic() {
+    info "Checking DialecticServer"
+
+    if [ ! -d "$DIALECTIC_ROOT" ]; then
+        warn "$DIALECTIC_ROOT is not installed"
+        return
+    fi
+
+    if [ -d "$DIALECTIC_ROOT/.git" ]; then
+        ok "DialecticServer is a managed Git checkout"
+    else
+        fail "DialecticServer is not a managed Git checkout; run Update System to migrate it safely"
+    fi
+
+    if have_cmd psql; then
+        export PGPASSWORD=dwemer
+        if psql -h 127.0.0.1 -U dwemer -d dialectic -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='eventlog'" 2>/dev/null | grep -q 1; then
+            ok "Dialectic database and core schema are available"
+        else
+            fail "Dialectic database or core schema is unavailable"
+        fi
+        unset PGPASSWORD
+    fi
+
+    if port_open "$DIALECTIC_BACKGROUND_PORT"; then
+        ok "Dialectic background processor is listening on 127.0.0.1:$DIALECTIC_BACKGROUND_PORT"
+    else
+        warn "Dialectic background processor is not listening on 127.0.0.1:$DIALECTIC_BACKGROUND_PORT"
+        if [ "$MODE" = "repair" ] && [ -f "$DIALECTIC_ROOT/service/start.sh" ]; then
+            chmod +x "$DIALECTIC_ROOT/service/start.sh" >/dev/null 2>&1 || true
+            su "$APP_USER" -c "nohup bash '$DIALECTIC_ROOT/service/start.sh' >/dev/null 2>&1 </dev/null &"
+            sleep 1
+            if port_open "$DIALECTIC_BACKGROUND_PORT"; then
+                fix "Started Dialectic background processor"
+            else
+                fail "Dialectic background processor did not bind port $DIALECTIC_BACKGROUND_PORT"
+            fi
+        fi
+    fi
+
+    if have_cmd curl && curl --fail --silent --max-time 5 "http://127.0.0.1:$DIALECTIC_UI_PORT/DialecticServer/health.php" >/dev/null 2>&1; then
+        ok "Dialectic health endpoint reports ready"
+    else
+        warn "Dialectic health endpoint is unavailable or degraded"
+    fi
+}
+
 tail_known_log() {
     local path="$1"
     local lines="${2:-20}"
@@ -405,6 +455,7 @@ tail_known_log() {
 check_ports() {
     info "Checking common service ports"
     check_port_report "Herika/Dwemer web UI" "$HERIKA_UI_PORT" warn
+    check_port_report "Dialectic web UI" "$DIALECTIC_UI_PORT" warn
     check_port_report "XTTS FastAPI" "$XTTS_PORT" warn
 }
 
@@ -463,6 +514,10 @@ check_recent_logs() {
     scan_log_for_patterns "$HERIKA_ROOT/log/service.log" "Herika service.log"
     scan_log_for_patterns "$HERIKA_ROOT/log/manager.log" "Herika manager.log"
     scan_log_for_patterns "$HERIKA_ROOT/log/relationship_worker.log" "Relationship worker"
+    scan_log_for_patterns "$DIALECTIC_ROOT/log/dialectic.log" "Dialectic dialectic.log"
+    scan_log_for_patterns "$DIALECTIC_ROOT/log/service.log" "Dialectic service.log"
+    scan_log_for_patterns "$DIALECTIC_ROOT/log/manager.log" "Dialectic manager.log"
+    scan_log_for_patterns "$DIALECTIC_ROOT/log/db_update_runner.log" "Dialectic database bootstrap"
     scan_log_for_patterns "/var/log/apache2/error.log" "Apache error.log"
 }
 
@@ -476,6 +531,7 @@ check_permissions
 check_apache
 check_postgres
 check_background_service
+check_dialectic
 check_ports
 check_recent_logs
 
