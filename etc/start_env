@@ -247,6 +247,61 @@ ensure_dialectic_database() {
     return 0
 }
 
+dialectic_processor_ready() {
+    local attempt
+    for attempt in {1..10}; do
+        if nc -z 127.0.0.1 12347 >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.15
+    done
+    return 1
+}
+
+collect_dialectic_process_tree() {
+    local parent_pid="$1"
+    local child_pid
+
+    while read -r child_pid; do
+        [ -n "$child_pid" ] && collect_dialectic_process_tree "$child_pid"
+    done < <(pgrep -P "$parent_pid" 2>/dev/null || true)
+
+    echo "$parent_pid"
+}
+
+stop_stale_dialectic_runtime() {
+    local start_script="$1"
+    local root_pid pid
+    local -a process_ids=()
+    declare -A seen=()
+
+    while read -r root_pid; do
+        [ -n "$root_pid" ] || continue
+        while read -r pid; do
+            if [ -n "$pid" ] && [ -z "${seen[$pid]+x}" ]; then
+                seen[$pid]=1
+                process_ids+=("$pid")
+            fi
+        done < <(collect_dialectic_process_tree "$root_pid")
+    done < <(pgrep -f "^bash $start_script$" 2>/dev/null || true)
+
+    if [ "${#process_ids[@]}" -eq 0 ]; then
+        return 0
+    fi
+
+    echo "Stopping stale DialecticServer background processor..."
+    kill -TERM "${process_ids[@]}" 2>/dev/null || true
+    sleep 1
+
+    for pid in "${process_ids[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    done
+
+    rm -f /tmp/dialectic_background_processor.lock
+}
+
 ensure_dialectic_runtime() {
     local server_root="/var/www/html/DialecticServer"
     local start_script="$server_root/service/start.sh"
@@ -259,13 +314,13 @@ ensure_dialectic_runtime() {
     chown -R dwemer:www-data "$server_root/log" "$server_root/soundcache" "$server_root/uploads" >/dev/null 2>&1 || true
     chmod 2775 "$server_root/log" "$server_root/soundcache" "$server_root/uploads" >/dev/null 2>&1 || true
 
-    if ! nc -z 127.0.0.1 12347 >/dev/null 2>&1; then
+    if ! dialectic_processor_ready; then
+        stop_stale_dialectic_runtime "$start_script"
         echo "Starting DialecticServer background processor..."
         su dwemer -c "nohup bash '$start_script' >/dev/null 2>&1 </dev/null &"
-        sleep 1
     fi
 
-    if nc -z 127.0.0.1 12347 >/dev/null 2>&1; then
+    if dialectic_processor_ready; then
         echo "DialecticServer background processor ready."
     else
         echo "WARNING: DialecticServer background processor is not listening on port 12347."
