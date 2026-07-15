@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SERVER_ROOT="${1:-/var/www/html/DialecticServer}"
+APP_USER="${DIALECTIC_APP_USER:-dwemer}"
+WEB_GROUP="${DIALECTIC_WEB_GROUP:-www-data}"
+RUNTIME_DIRS=(
+    log
+    soundcache
+    uploads
+    data/voices
+)
+
+if [ "$(id -u)" -ne 0 ]; then
+    printf 'ensure_dialectic_runtime_permissions must run as root\n' >&2
+    exit 1
+fi
+
+if [ ! -d "$SERVER_ROOT" ]; then
+    exit 0
+fi
+
+for relative_dir in "${RUNTIME_DIRS[@]}"; do
+    target="$SERVER_ROOT/$relative_dir"
+    install -d -o "$APP_USER" -g "$WEB_GROUP" -m 2775 "$target"
+    chown -R "$APP_USER:$WEB_GROUP" "$target"
+    find "$target" -type d -exec chmod 2775 {} +
+    find "$target" -type f -exec chmod 0664 {} +
+done
+
+printf 'DialecticServer runtime permissions ready under %s\n' "$SERVER_ROOT"

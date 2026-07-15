@@ -206,6 +206,26 @@ restore_dialectic_runtime_state() {
     fi
 }
 
+ensure_dialectic_runtime_permissions() {
+    local helper="/usr/local/bin/ensure_dialectic_runtime_permissions"
+
+    if [ ! -x "$helper" ]; then
+        helper="/home/dwemer/dwemerdistro/bin/ensure_dialectic_runtime_permissions"
+    fi
+
+    if [ ! -x "$helper" ]; then
+        print_warning "DialecticServer permission helper is unavailable."
+        return 1
+    fi
+
+    if ! echo "$PASSWORD" | sudo -S "$helper" /var/www/html/DialecticServer; then
+        print_warning "DialecticServer runtime permission repair failed."
+        return 1
+    fi
+
+    return 0
+}
+
 ensure_dialectic_repo_exists() {
     local target_branch="${1:-dialectic}"
     local repo_path="/var/www/html/DialecticServer"
@@ -401,8 +421,7 @@ if [ "$UPDATE_DIALECTIC" -eq 1 ]; then
             git pull --ff-only
         fi
 
-        echo "$PASSWORD" | sudo -S chown -R dwemer:www-data /var/www/html/DialecticServer
-        echo "$PASSWORD" | sudo -S chmod -R 775 /var/www/html/DialecticServer
+        ensure_dialectic_runtime_permissions || true
         if ensure_dialectic_database; then
             print_success "DialecticServer updated successfully"
         else

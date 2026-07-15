@@ -258,6 +258,26 @@ dialectic_processor_ready() {
     return 1
 }
 
+ensure_dialectic_runtime_permissions() {
+    local helper="/usr/local/bin/ensure_dialectic_runtime_permissions"
+
+    if [ ! -d /var/www/html/DialecticServer ]; then
+        return 0
+    fi
+
+    if [ ! -x "$helper" ]; then
+        echo "WARNING: DialecticServer permission helper is unavailable."
+        return 1
+    fi
+
+    if ! "$helper" /var/www/html/DialecticServer; then
+        echo "WARNING: DialecticServer runtime permission repair failed."
+        return 1
+    fi
+
+    return 0
+}
+
 collect_dialectic_process_tree() {
     local parent_pid="$1"
     local child_pid
@@ -367,6 +387,8 @@ echo "Starting Apache/PHP/PGSQL Server"
 if ! ensure_stobe_database; then
     echo "WARNING: StobeServer may not be fully initialized."
 fi
+
+ensure_dialectic_runtime_permissions || true
 
 if ! ensure_dialectic_database; then
     echo "WARNING: DialecticServer may not be fully initialized."

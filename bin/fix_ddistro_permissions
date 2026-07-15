@@ -231,7 +231,7 @@ repair_server "$WEB_ROOT/StobeServer" \
     log logs cache tmp uploads data soundcache conf
 
 repair_server "$WEB_ROOT/DialecticServer" \
-    log logs cache tmp uploads data soundcache conf
+    log logs cache tmp uploads data data/voices soundcache conf
 
 repair_server "$WEB_ROOT/Dwemer-Dashboard" \
     log logs cache tmp uploads
