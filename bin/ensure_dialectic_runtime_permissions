@@ -9,6 +9,7 @@ RUNTIME_DIRS=(
     log
     soundcache
     uploads
+    data/tmp
     data/voices
 )
 
