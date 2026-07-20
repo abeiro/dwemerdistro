@@ -206,7 +206,7 @@ CUDA_HOME="$(resolve_cuda_home)"
 run_as_dwemer "cd '$REPO_DIR' && export CUDA_HOME='$CUDA_HOME' && export PATH=\"\$CUDA_HOME/bin:\$PATH\" && rm -rf build && cmake -S . -B build -DENGINE_ENABLE_CUDA=ON && cmake --build build --parallel '$BUILD_PARALLEL' --target audiocpp_cli --target audiocpp_server"
 
 ensure_hf_token
-run_as_dwemer "cd '$REPO_DIR' && python3 -m venv model-venv && source model-venv/bin/activate && pip install --upgrade pip && pip install pyyaml torch safetensors && python3 tools/model_manager.py install pocket_tts --overwrite"
+run_as_dwemer "cd '$REPO_DIR' && python3 -m venv model-venv && source model-venv/bin/activate && pip install --upgrade pip && pip install pyyaml safetensors numpy && pip install torch --index-url https://download.pytorch.org/whl/cpu && python3 tools/model_manager.py install pocket_tts --overwrite"
 
 write_runtime_files
 
