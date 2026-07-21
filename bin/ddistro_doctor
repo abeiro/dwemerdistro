@@ -14,7 +14,17 @@ DIALECTIC_BACKGROUND_PORT=12347
 HERIKA_UI_PORT=8081
 DIALECTIC_UI_PORT=8088
 XTTS_PORT=8020
+OMNIVOICE_PORT=8021
+PARAKEET_PORT=8022
+CHATTERBOX_PORT=8023
+POCKETTTS_PORT=8024
+POCKETTTS_AUDIOCPP_PORT=8086
 POSTGRES_PORT=5432
+
+if [ -f /etc/dwemerdistro_services.conf ]; then
+    # shellcheck disable=SC1091
+    source /etc/dwemerdistro_services.conf
+fi
 
 CHECKED=0
 WARNINGS=0
@@ -456,7 +466,24 @@ check_ports() {
     info "Checking common service ports"
     check_port_report "Herika/Dwemer web UI" "$HERIKA_UI_PORT" warn
     check_port_report "Dialectic web UI" "$DIALECTIC_UI_PORT" warn
-    check_port_report "XTTS FastAPI" "$XTTS_PORT" warn
+
+    if [ -e /home/dwemer/xtts-api-server/start.sh ]; then
+        check_port_report "XTTS FastAPI" "$XTTS_PORT" warn
+    fi
+    if [ -e /home/dwemer/omnivoice-tts/start-gpu.sh ]; then
+        check_port_report "OmniVoice TTS" "$OMNIVOICE_PORT" warn
+    fi
+    if [ -e /home/dwemer/parakeet-api-server/start.sh ]; then
+        check_port_report "Parakeet STT" "$PARAKEET_PORT" warn
+    fi
+    if [ -e /home/dwemer/chatterbox/start.sh ]; then
+        check_port_report "Chatterbox TTS" "$CHATTERBOX_PORT" warn
+    fi
+    if [ -e /home/dwemer/audio.cpp/start.sh ]; then
+        check_port_report "PocketTTS audio.cpp" "$POCKETTTS_AUDIOCPP_PORT" warn
+    elif [ -e /home/dwemer/pocket-tts/start.sh ]; then
+        check_port_report "PocketTTS Python" "$POCKETTTS_PORT" warn
+    fi
 }
 
 check_disk() {

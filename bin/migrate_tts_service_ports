@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ -f /etc/dwemerdistro_services.conf ]; then
+    # shellcheck disable=SC1091
+    source /etc/dwemerdistro_services.conf
+fi
+
+CHATTERBOX_PORT="${CHATTERBOX_PORT:-8023}"
+POCKETTTS_PORT="${POCKETTTS_PORT:-8024}"
+BACKUP_ROOT="${DWEMER_TTS_PORT_BACKUP_ROOT:-/home/dwemer/deploy-backups}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_DIR="$BACKUP_ROOT/tts-service-ports-$STAMP"
+PGUSER="${PGUSER:-dwemer}"
+PGHOST="${PGHOST:-127.0.0.1}"
+DATABASES="${DWEMER_TTS_DATABASES:-dwemer dialectic stobe}"
+STOBE_DATABASE="${DWEMER_TTS_STOBE_DATABASE:-stobe}"
+export PGPASSWORD="${PGPASSWORD:-dwemer}"
+
+mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+
+database_exists() {
+    psql -h "$PGHOST" -U "$PGUSER" -d postgres -Atqc \
+        "SELECT 1 FROM pg_database WHERE datname = '$1'" 2>/dev/null | grep -qx 1
+}
+
+table_exists() {
+    psql -h "$PGHOST" -U "$PGUSER" -d "$1" -Atqc \
+        "SELECT to_regclass('public.core_tts_connector') IS NOT NULL" 2>/dev/null | grep -qx t
+}
+
+backup_connectors() {
+    local db="$1"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$db" -Atqc \
+        "SELECT row_to_json(c) FROM public.core_tts_connector c ORDER BY id" \
+        > "$BACKUP_DIR/$db-core_tts_connector.jsonl"
+}
+
+migration_needed() {
+    local db="$1"
+    if [ "$db" = "$STOBE_DATABASE" ]; then
+        psql -h "$PGHOST" -U "$PGUSER" -d "$db" -Atqc "
+SELECT EXISTS (
+    SELECT 1 FROM public.core_tts_connector
+     WHERE (connector_type = 'chatterbox'
+            AND lower(coalesce(name, '')) IN ('ddistro chatterbox', 'chatterbox default')
+            AND lower(rtrim(coalesce(base_url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020'))
+        OR (connector_type = 'pocket_tts'
+            AND lower(coalesce(name, '')) IN ('ddistro pockettts', 'pocket tts default')
+            AND lower(rtrim(coalesce(base_url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020')
+            AND lower(coalesce(config->>'api_format', 'legacy')) NOT IN ('audio_cpp', 'audiocpp'))
+)" 2>/dev/null | grep -qx t
+        return
+    fi
+
+    psql -h "$PGHOST" -U "$PGUSER" -d "$db" -Atqc "
+SELECT EXISTS (
+    SELECT 1 FROM public.core_tts_connector
+     WHERE (driver = 'chatterbox'
+            AND lower(coalesce(label, '')) IN ('ddistro chatterbox', 'chatterbox default')
+            AND lower(rtrim(coalesce(url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020'))
+        OR (driver = 'pockettts'
+            AND lower(coalesce(label, '')) IN ('ddistro pockettts', 'pocket tts default')
+            AND lower(rtrim(coalesce(url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020')
+            AND lower(coalesce(metadata->>'api_format', 'legacy')) NOT IN ('audio_cpp', 'audiocpp'))
+)" 2>/dev/null | grep -qx t
+}
+
+migrate_herika_style() {
+    local db="$1"
+    psql -v ON_ERROR_STOP=1 -h "$PGHOST" -U "$PGUSER" -d "$db" <<SQL
+BEGIN;
+UPDATE public.core_tts_connector
+   SET url = 'http://127.0.0.1:${CHATTERBOX_PORT}'
+ WHERE driver = 'chatterbox'
+   AND lower(coalesce(label, '')) IN ('ddistro chatterbox', 'chatterbox default')
+   AND lower(rtrim(coalesce(url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020');
+
+UPDATE public.core_tts_connector
+   SET url = 'http://127.0.0.1:${POCKETTTS_PORT}',
+       metadata = jsonb_set(
+           coalesce(metadata, '{}'::jsonb),
+           '{endpoint}',
+           coalesce(metadata->'endpoint', '{}'::jsonb) || jsonb_build_object(
+               'description',
+               'Endpoint URL. DwemerDistro audio.cpp PocketTTS uses port 8086. Python PocketTTS uses dedicated port ${POCKETTTS_PORT}.'
+           ),
+           true
+       )
+ WHERE driver = 'pockettts'
+   AND lower(coalesce(label, '')) IN ('ddistro pockettts', 'pocket tts default')
+   AND lower(rtrim(coalesce(url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020')
+   AND lower(coalesce(metadata->>'api_format', 'legacy')) NOT IN ('audio_cpp', 'audiocpp');
+COMMIT;
+SQL
+}
+
+migrate_stobe_style() {
+    local db="$1"
+    psql -v ON_ERROR_STOP=1 -h "$PGHOST" -U "$PGUSER" -d "$db" <<SQL
+BEGIN;
+UPDATE public.core_tts_connector
+   SET base_url = 'http://127.0.0.1:${CHATTERBOX_PORT}'
+ WHERE connector_type = 'chatterbox'
+   AND lower(coalesce(name, '')) IN ('ddistro chatterbox', 'chatterbox default')
+   AND lower(rtrim(coalesce(base_url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020');
+
+UPDATE public.core_tts_connector
+   SET base_url = 'http://127.0.0.1:${POCKETTTS_PORT}'
+ WHERE connector_type = 'pocket_tts'
+   AND lower(coalesce(name, '')) IN ('ddistro pockettts', 'pocket tts default')
+   AND lower(rtrim(coalesce(base_url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020')
+   AND lower(coalesce(config->>'api_format', 'legacy')) NOT IN ('audio_cpp', 'audiocpp');
+COMMIT;
+SQL
+}
+
+processed=0
+for db in $DATABASES; do
+    if ! database_exists "$db" || ! table_exists "$db"; then
+        printf '[SKIP] %s has no core_tts_connector table.\n' "$db"
+        continue
+    fi
+    if ! migration_needed "$db"; then
+        printf '[SKIP] %s has no managed legacy TTS endpoints.\n' "$db"
+        continue
+    fi
+
+    backup_connectors "$db"
+    if [ "$db" = "$STOBE_DATABASE" ]; then
+        migrate_stobe_style "$db"
+    else
+        migrate_herika_style "$db"
+    fi
+    processed=$((processed + 1))
+    printf '[OK] %s managed loopback TTS endpoints use the dedicated ports.\n' "$db"
+done
+
+if [ "$processed" -eq 0 ]; then
+    rmdir "$BACKUP_DIR" 2>/dev/null || true
+    printf '[SKIP] No installed server databases required TTS port migration.\n'
+    exit 0
+fi
+
+printf '[OK] Connector backups: %s\n' "$BACKUP_DIR"

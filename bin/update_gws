@@ -836,6 +836,18 @@ else
     printf "${YELLOW}[SKIP] OmniVoice TTS not installed; install it from DwemerDistro Installed Components.${NC}\n"
 fi
 
+# Migrate only known DwemerDistro-managed loopback connectors after the
+# corresponding service repositories have been updated.
+if [ -x /usr/local/bin/migrate_tts_service_ports ]; then
+    print_header "MIGRATING LOCAL TTS SERVICE PORTS" "$BRANCH"
+    if sudo -u dwemer /usr/local/bin/migrate_tts_service_ports; then
+        printf "${GREEN}[SUCCESS] Managed TTS connector ports migrated successfully${NC}\n"
+    else
+        COMPONENT_UPDATE_FAILED=1
+        print_warning "Managed TTS connector port migration failed. Existing connector backups were retained."
+    fi
+fi
+
 # CHIM MCP Server update/install
 print_warning "Skipping DwemerDistro MCP update for now."
 

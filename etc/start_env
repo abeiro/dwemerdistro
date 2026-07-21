@@ -7,6 +7,18 @@ if [ -f "/home/dwemer/.cuda_config" ]; then
     source /home/dwemer/.cuda_config
 fi
 
+if [ -f "/etc/dwemerdistro_services.conf" ]; then
+    # shellcheck disable=SC1091
+    source /etc/dwemerdistro_services.conf
+fi
+
+XTTS_PORT="${XTTS_PORT:-8020}"
+OMNIVOICE_PORT="${OMNIVOICE_PORT:-8021}"
+PARAKEET_PORT="${PARAKEET_PORT:-8022}"
+CHATTERBOX_PORT="${CHATTERBOX_PORT:-8023}"
+POCKETTTS_PORT="${POCKETTTS_PORT:-8024}"
+POCKETTTS_AUDIOCPP_PORT="${POCKETTTS_AUDIOCPP_PORT:-8086}"
+
 # Clean tmp
 find /tmp -type f -mtime +7 -delete 
 find /tmp/ -type d -mtime +7 -exec \rm -fr {} \; &>/dev/null
@@ -479,7 +491,7 @@ fi
 if [ -f /home/dwemer/parakeet-api-server/start.sh ];then
 	echo -ne  "Starting Parakeet "
 	su dwemer -c /home/dwemer/parakeet-api-server/start.sh
-	check_port 8022
+    check_port "$PARAKEET_PORT"
 else
 	echo "Skipping Parakeet (not enabled)"
 	L_PARAKEET=1
@@ -488,7 +500,7 @@ fi
 if [ -f /home/dwemer/chatterbox/start.sh ];then
 	echo -ne  "Starting Chatterbox"
 	su dwemer -c /home/dwemer/chatterbox/start.sh
-	if ! check_port 8020; then
+	if ! check_port "$CHATTERBOX_PORT"; then
 		L_CHATTERBOX=1
 	fi
 else
@@ -496,18 +508,18 @@ else
 	L_CHATTERBOX=1
 fi
 
-POCKETTTS_PORT=8086
+ACTIVE_POCKETTTS_PORT="$POCKETTTS_AUDIOCPP_PORT"
 if [ -f /home/dwemer/audio.cpp/start.sh ];then
 	echo -ne  "Starting PocketTTS audio.cpp"
 	su dwemer -c /home/dwemer/audio.cpp/start.sh
-	if ! check_port 8086; then
+	if ! check_port "$POCKETTTS_AUDIOCPP_PORT"; then
 		L_POCKETTTS=1
 	fi
 elif [ -f /home/dwemer/pocket-tts/start.sh ];then
-	POCKETTTS_PORT=8020
+	ACTIVE_POCKETTTS_PORT="$POCKETTTS_PORT"
 	echo -ne  "Starting pocket-tts"
 	su dwemer -c /home/dwemer/pocket-tts/start.sh
-	if ! check_port 8020; then
+	if ! check_port "$POCKETTTS_PORT"; then
 		L_POCKETTTS=1
 	fi
 else
@@ -542,7 +554,7 @@ fi
 if [ -f  "/home/dwemer/xtts-api-server/start.sh" ]; then
 	echo -ne  "Starting CHIM XTTS server"
 	su dwemer -c "/home/dwemer/xtts-api-server/start.sh"
-	check_port 8020
+	check_port "$XTTS_PORT"
 else
 	echo  "Skipping CHIM XTTS server (not enabled)"
 	L_XTTSV2=1
@@ -551,7 +563,7 @@ fi
 if [ -f "/home/dwemer/omnivoice-tts/start-gpu.sh" ]; then
 	echo -ne  "Starting OmniVoice TTS "
 	su dwemer -c "/home/dwemer/omnivoice-tts/start-gpu.sh"
-	if ! check_port 8021; then
+	if ! check_port "$OMNIVOICE_PORT"; then
 		L_OMNIVOICE=1
 	fi
 else
@@ -640,11 +652,11 @@ if [ -z "$L_WHISPER" ]; then
 fi
 
 if [ -z "$L_XTTSV2" ]; then
-	echo CHIM XTTS API: http://$ipaddress:8020
+	echo CHIM XTTS API: http://$ipaddress:$XTTS_PORT
 fi
 
 if [ -z "$L_OMNIVOICE" ]; then
-	echo OmniVoice TTS API: http://$ipaddress:8021
+	echo OmniVoice TTS API: http://$ipaddress:$OMNIVOICE_PORT
 fi
 
 if [ -z "$L_MIMIC" ]; then
@@ -660,15 +672,15 @@ if [ -z "$L_PIPERTTS" ]; then
 fi
 
 if [ -z "$L_PARAKEET" ]; then
-	echo Parakeet API: http://$ipaddress:8022
+	echo Parakeet API: http://$ipaddress:$PARAKEET_PORT
 fi
 
 if [ -z "$L_CHATTERBOX" ]; then
-	echo Chatterbox API: http://$ipaddress:8020
+	echo Chatterbox API: http://$ipaddress:$CHATTERBOX_PORT
 fi
 
 if [ -z "$L_POCKETTTS" ]; then
-	echo PocketTTS API: http://$ipaddress:$POCKETTTS_PORT
+	echo PocketTTS API: http://$ipaddress:$ACTIVE_POCKETTTS_PORT
 fi
 
 if [ -z "$L_MCPSERVER" ]; then
