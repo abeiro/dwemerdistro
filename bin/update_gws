@@ -281,6 +281,26 @@ ensure_dialectic_database() {
         return 1
     fi
 
+    if ! pg_isready -d template1 -q; then
+        printf ">> PostgreSQL is not running; starting it now...\n"
+        echo "$PASSWORD" | sudo -S /etc/init.d/postgresql start >"$bootstrap_output" 2>&1 || true
+        local postgres_ready=0
+        local attempt
+        for attempt in {1..15}; do
+            if pg_isready -d template1 -q; then
+                postgres_ready=1
+                break
+            fi
+            sleep 1
+        done
+        if [ "$postgres_ready" -ne 1 ]; then
+            mkdir -p "$server_root/log" >/dev/null 2>&1 || true
+            cp "$bootstrap_output" "$server_root/log/db_update_runner.log" 2>/dev/null || true
+            print_warning "PostgreSQL did not start. See $server_root/log/db_update_runner.log"
+            return 1
+        fi
+    fi
+
     export PGPASSWORD=dwemer
     : > "$bootstrap_output"
     if ! db_exists=$(psql -h localhost -U dwemer -d dwemer -X -tAc "SELECT 1 FROM pg_database WHERE datname = 'dialectic' LIMIT 1" 2>>"$bootstrap_output"); then
