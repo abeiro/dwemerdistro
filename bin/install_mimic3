@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+COMPONENT_DIR="${MIMIC3_COMPONENT_DIR:-/home/dwemer/mimic3}"
+VENV_DIR="${MIMIC3_VENV_DIR:-/home/dwemer/python-mimic3}"
+
+if [ ! -f "$COMPONENT_DIR/const_altered.py" ] || [ ! -x "$COMPONENT_DIR/conf.sh" ]; then
+    echo "ERROR: Mimic3 component files are missing from $COMPONENT_DIR." >&2
+    exit 1
+fi
+
+echo "=== DwemerDistro Mimic3 setup ==="
+echo "Installing into $VENV_DIR without removing unrelated user data."
+
+python3 -m venv "$VENV_DIR"
+# shellcheck disable=SC1091
+source "$VENV_DIR/bin/activate"
+
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install 'mycroft-plugin-tts-mimic3[all]'
+
+MIMIC_CONST_PATH="$(python - <<'PY'
+from pathlib import Path
+import mimic3_tts
+
+print(Path(mimic3_tts.__file__).resolve().parent / "const.py")
+PY
+)"
+install -m 0644 "$COMPONENT_DIR/const_altered.py" "$MIMIC_CONST_PATH"
+
+"$COMPONENT_DIR/conf.sh"
+echo "Mimic3 installation completed."
