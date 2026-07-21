@@ -424,11 +424,17 @@ fi
 
 ensure_dialectic_runtime_permissions || true
 
+DIALECTIC_DATABASE_READY=1
 if ! ensure_dialectic_database; then
+    DIALECTIC_DATABASE_READY=0
     echo "WARNING: DialecticServer may not be fully initialized."
 fi
 
-ensure_dialectic_runtime
+if [ "$DIALECTIC_DATABASE_READY" -eq 1 ]; then
+    ensure_dialectic_runtime
+else
+    echo "WARNING: DialecticServer background runtime was not started because its database is not ready."
+fi
 
 # Create symbolic link for Apache error log if it doesn't exist
 if [ ! -e "/var/www/html/HerikaServer/log/apache_error.log" ]; then
