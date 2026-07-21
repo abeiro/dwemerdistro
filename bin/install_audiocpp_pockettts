@@ -203,7 +203,14 @@ else
 fi
 
 CUDA_HOME="$(resolve_cuda_home)"
-run_as_dwemer "cd '$REPO_DIR' && export CUDA_HOME='$CUDA_HOME' && export PATH=\"\$CUDA_HOME/bin:\$PATH\" && rm -rf build && cmake -S . -B build -DENGINE_ENABLE_CUDA=ON && cmake --build build --parallel '$BUILD_PARALLEL' --target audiocpp_cli --target audiocpp_server"
+if [ ! -x "$CUDA_HOME/bin/nvcc" ]; then
+    echo "CUDA compiler not found at $CUDA_HOME/bin/nvcc."
+    exit 1
+fi
+
+echo "Using CUDA compiler: $CUDA_HOME/bin/nvcc"
+"$CUDA_HOME/bin/nvcc" --version | tail -n 1
+run_as_dwemer "cd '$REPO_DIR' && export CUDA_HOME='$CUDA_HOME' && export CUDACXX='$CUDA_HOME/bin/nvcc' && export PATH=\"\$CUDA_HOME/bin:\$PATH\" && rm -rf build && cmake -S . -B build -DENGINE_ENABLE_CUDA=ON -DCMAKE_CUDA_COMPILER=\"\$CUDACXX\" -DCUDAToolkit_ROOT=\"\$CUDA_HOME\" && cmake --build build --parallel '$BUILD_PARALLEL' --target audiocpp_cli --target audiocpp_server"
 
 ensure_hf_token
 run_as_dwemer "cd '$REPO_DIR' && python3 -m venv model-venv && source model-venv/bin/activate && pip install --upgrade pip && pip install pyyaml safetensors numpy && pip install torch --index-url https://download.pytorch.org/whl/cpu && python3 tools/model_manager.py install pocket_tts --overwrite"
