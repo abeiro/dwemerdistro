@@ -12,6 +12,7 @@ UPDATE_HERIKA=1
 UPDATE_STOBE=1
 UPDATE_DIALECTIC=1
 DIALECTIC_UPDATE_FAILED=0
+COMPONENT_UPDATE_FAILED=0
 
 # Helper function for section headers
 print_header() {
@@ -547,7 +548,28 @@ print_header "UPDATING MINI-ME & TXT2VEC" "$BRANCH"
 printf ">> Resetting repository...\n"
 git reset --hard HEAD
 printf ">> Pulling latest changes...\n"
-git pull
+XTTS_UPDATE_OK=1
+if git fetch origin "$BRANCH"; then
+    XTTS_CONFLICT_FILE="xtts_api_server/voice_management.py"
+    if [ -f "$XTTS_CONFLICT_FILE" ] \
+        && ! git ls-files --error-unmatch -- "$XTTS_CONFLICT_FILE" >/dev/null 2>&1 \
+        && git cat-file -e "origin/${BRANCH}:${XTTS_CONFLICT_FILE}" 2>/dev/null; then
+        XTTS_BACKUP_ROOT="/home/dwemer/xtts-api-server-update-backups/$(date -u '+%Y%m%d%H%M%S')"
+        mkdir -p "$XTTS_BACKUP_ROOT/$(dirname "$XTTS_CONFLICT_FILE")"
+        if mv "$XTTS_CONFLICT_FILE" "$XTTS_BACKUP_ROOT/$XTTS_CONFLICT_FILE"; then
+            print_warning "Backed up conflicting local XTTS file to $XTTS_BACKUP_ROOT/$XTTS_CONFLICT_FILE"
+        else
+            print_warning "Failed to back up conflicting XTTS file: $XTTS_CONFLICT_FILE"
+            XTTS_UPDATE_OK=0
+        fi
+    fi
+
+    if [ "$XTTS_UPDATE_OK" -eq 1 ] && ! git merge --ff-only "origin/$BRANCH"; then
+        XTTS_UPDATE_OK=0
+    fi
+else
+    XTTS_UPDATE_OK=0
+fi
 if [ -x /home/dwemer/python-minime/bin/pip ]; then
     printf ">> Updating Python dependencies...\n"
     /home/dwemer/python-minime/bin/pip install -r requirements.txt
@@ -664,7 +686,12 @@ fi
 # Set permissions for XTTS
 sudo chown -R dwemer:dwemer /home/dwemer/xtts-api-server
 sudo chmod -R 755 /home/dwemer/xtts-api-server
-printf "${GREEN}[SUCCESS] CHIM XTTS updated successfully${NC}\n"
+if [ "$XTTS_UPDATE_OK" -eq 1 ]; then
+    printf "${GREEN}[SUCCESS] CHIM XTTS updated successfully${NC}\n"
+else
+    COMPONENT_UPDATE_FAILED=1
+    print_warning "CHIM XTTS update failed. The existing installation was retained."
+fi
 
 # Parakeet update
 if [ ! -d /home/dwemer/parakeet-api-server ];then
@@ -826,9 +853,9 @@ else
 fi
 
 # Final message
-if [ "$DIALECTIC_UPDATE_FAILED" -ne 0 ]; then
+if [ "$DIALECTIC_UPDATE_FAILED" -ne 0 ] || [ "$COMPONENT_UPDATE_FAILED" -ne 0 ]; then
     printf "\n${BOLD}=======================================================${NC}\n"
-    printf "${BOLD}${RED}        UPDATE COMPLETED WITH DIALECTIC ERRORS        ${NC}\n"
+    printf "${BOLD}${RED}              UPDATE COMPLETED WITH ERRORS            ${NC}\n"
     printf "${BOLD}=======================================================${NC}\n\n"
     exit 1
 fi
