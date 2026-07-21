@@ -281,12 +281,17 @@ ensure_dialectic_database() {
     fi
 
     export PGPASSWORD=dwemer
-    if ! db_exists=$(echo "$PASSWORD" | sudo -S -u postgres psql -d template1 -X -tAc "SELECT 1 FROM pg_database WHERE datname = 'dialectic' LIMIT 1" 2>"$bootstrap_output"); then
-        mkdir -p "$server_root/log" >/dev/null 2>&1 || true
-        cp "$bootstrap_output" "$server_root/log/db_update_runner.log" 2>/dev/null || true
-        print_warning "Failed to inspect the Dialectic database. See $server_root/log/db_update_runner.log"
-        unset PGPASSWORD
-        return 1
+    : > "$bootstrap_output"
+    if ! db_exists=$(psql -h localhost -U dwemer -d dwemer -X -tAc "SELECT 1 FROM pg_database WHERE datname = 'dialectic' LIMIT 1" 2>>"$bootstrap_output"); then
+        printf '\nApplication database catalog probe failed; trying the PostgreSQL service account.\n' >> "$bootstrap_output"
+        if ! db_exists=$(echo "$PASSWORD" | sudo -S -u postgres psql -d template1 -X -tAc "SELECT 1 FROM pg_database WHERE datname = 'dialectic' LIMIT 1" 2>>"$bootstrap_output"); then
+            mkdir -p "$server_root/log" >/dev/null 2>&1 || true
+            cp "$bootstrap_output" "$server_root/log/db_update_runner.log" 2>/dev/null || true
+            print_warning "Failed to inspect the Dialectic database. See $server_root/log/db_update_runner.log"
+            tail -n 8 "$bootstrap_output" | sed 's/^/  /'
+            unset PGPASSWORD
+            return 1
+        fi
     fi
     db_exists=$(printf '%s' "$db_exists" | tr -d '[:space:]')
     if [ "$db_exists" != "1" ]; then
@@ -300,7 +305,19 @@ ensure_dialectic_database() {
         fi
     fi
 
-    db_encoding=$(echo "$PASSWORD" | sudo -S -u postgres psql -d template1 -X -tAc "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = 'dialectic'" 2>/dev/null | tr -d '[:space:]')
+    : > "$bootstrap_output"
+    if ! db_encoding=$(psql -h localhost -U dwemer -d dwemer -X -tAc "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = 'dialectic'" 2>>"$bootstrap_output"); then
+        printf '\nApplication database encoding probe failed; trying the PostgreSQL service account.\n' >> "$bootstrap_output"
+        if ! db_encoding=$(echo "$PASSWORD" | sudo -S -u postgres psql -d template1 -X -tAc "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = 'dialectic'" 2>>"$bootstrap_output"); then
+            mkdir -p "$server_root/log" >/dev/null 2>&1 || true
+            cp "$bootstrap_output" "$server_root/log/db_update_runner.log" 2>/dev/null || true
+            print_warning "Failed to inspect the Dialectic database encoding. See $server_root/log/db_update_runner.log"
+            tail -n 8 "$bootstrap_output" | sed 's/^/  /'
+            unset PGPASSWORD
+            return 1
+        fi
+    fi
+    db_encoding=$(printf '%s' "$db_encoding" | tr -d '[:space:]')
     if [ "$db_encoding" = "SQL_ASCII" ]; then
         if [ ! -f "$utf8_migration" ]; then
             print_warning "Dialectic database uses SQL_ASCII, but the UTF-8 migration tool is missing: $utf8_migration"
