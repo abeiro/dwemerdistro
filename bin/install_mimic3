@@ -17,14 +17,17 @@ python3 -m venv "$VENV_DIR"
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 
-python -m pip install --upgrade pip setuptools wheel
+python -m pip install --upgrade pip 'setuptools<81' wheel
 python -m pip install 'mycroft-plugin-tts-mimic3[all]'
 
 MIMIC_CONST_PATH="$(python - <<'PY'
+import importlib.util
 from pathlib import Path
-import mimic3_tts
 
-print(Path(mimic3_tts.__file__).resolve().parent / "const.py")
+spec = importlib.util.find_spec("mimic3_tts")
+if spec is None or spec.origin is None:
+    raise SystemExit("Unable to locate the installed mimic3_tts package")
+print(Path(spec.origin).resolve().parent / "const.py")
 PY
 )"
 install -m 0644 "$COMPONENT_DIR/const_altered.py" "$MIMIC_CONST_PATH"
