@@ -268,7 +268,9 @@ ensure_dialectic_repo_exists() {
 ensure_dialectic_database() {
     local server_root="/var/www/html/DialecticServer"
     local baseline="$server_root/data/database_default.sql"
+    local utf8_migration="$server_root/tools/migrate-dialectic-db-utf8-wsl.sh"
     local db_exists=""
+    local db_encoding=""
     local schema_ready=""
     local bootstrap_output="/tmp/dialectic_database_bootstrap.out"
 
@@ -282,11 +284,43 @@ ensure_dialectic_database() {
     db_exists=$(psql -h localhost -U dwemer -tAc "SELECT 1 FROM pg_database WHERE datname = 'dialectic' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
     if [ "$db_exists" != "1" ]; then
         printf ">> Creating dialectic database...\n"
-        if ! createdb -h localhost -U dwemer -O dwemer dialectic >/dev/null 2>&1; then
+        if ! createdb -h localhost -U dwemer -O dwemer --encoding=UTF8 --locale=C --template=template0 dialectic >/dev/null 2>&1; then
             print_warning "Failed to create dialectic database."
             unset PGPASSWORD
             return 1
         fi
+    fi
+
+    db_encoding=$(psql -h localhost -U dwemer -d postgres -tAc "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = 'dialectic'" 2>/dev/null | tr -d '[:space:]')
+    if [ "$db_encoding" = "SQL_ASCII" ]; then
+        if [ ! -f "$utf8_migration" ]; then
+            print_warning "Dialectic database uses SQL_ASCII, but the UTF-8 migration tool is missing: $utf8_migration"
+            unset PGPASSWORD
+            return 1
+        fi
+
+        printf ">> Migrating the existing Dialectic database from SQL_ASCII to UTF8...\n"
+        if ! echo "$PASSWORD" | sudo -S bash "$utf8_migration" >"$bootstrap_output" 2>&1; then
+            mkdir -p "$server_root/log" >/dev/null 2>&1 || true
+            cp "$bootstrap_output" "$server_root/log/db_utf8_migration.log" 2>/dev/null || true
+            print_warning "Dialectic UTF-8 migration failed. The original database was retained. See $server_root/log/db_utf8_migration.log"
+            unset PGPASSWORD
+            return 1
+        fi
+
+        db_encoding=$(psql -h localhost -U dwemer -d postgres -tAc "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = 'dialectic'" 2>/dev/null | tr -d '[:space:]')
+        if [ "$db_encoding" != "UTF8" ]; then
+            print_warning "Dialectic database migration completed without producing UTF8 (reported encoding: ${db_encoding:-unknown})."
+            unset PGPASSWORD
+            return 1
+        fi
+
+        rm -f "$bootstrap_output"
+        print_success "Dialectic database migrated to UTF8. A rollback database and safety dump were retained."
+    elif [ "$db_encoding" != "UTF8" ]; then
+        print_warning "Dialectic database uses unsupported encoding '${db_encoding:-unknown}'."
+        unset PGPASSWORD
+        return 1
     fi
 
     if ! echo "$PASSWORD" | sudo -S -u postgres psql -d dialectic -c "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS vector; ALTER DATABASE dialectic OWNER TO dwemer;" >/dev/null 2>&1; then
