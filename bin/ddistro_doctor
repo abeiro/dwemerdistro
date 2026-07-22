@@ -16,8 +16,10 @@ DIALECTIC_UI_PORT=8088
 XTTS_PORT=8020
 OMNIVOICE_PORT=8021
 PARAKEET_PORT=8022
-CHATTERBOX_PORT=8023
-POCKETTTS_PORT=8024
+CHATTERBOX_LEGACY_PORT=8020
+CHATTERBOX_DEDICATED_PORT=8023
+POCKETTTS_LEGACY_PORT=8020
+POCKETTTS_DEDICATED_PORT=8024
 POCKETTTS_AUDIOCPP_PORT=8086
 POSTGRES_PORT=5432
 
@@ -137,6 +139,80 @@ port_open() {
     fi
 
     timeout 1 bash -c ":</dev/tcp/127.0.0.1/$port" >/dev/null 2>&1
+}
+
+read_tts_service_port() {
+    local port_file="$1"
+    local fallback="$2"
+    local value=""
+
+    if [ -f "$port_file" ]; then
+        value="$(tr -d '[:space:]' < "$port_file")"
+    fi
+    case "$value" in
+        ''|*[!0-9]*) value="$fallback" ;;
+    esac
+    printf '%s\n' "$value"
+}
+
+probe_tts_provider() {
+    local port="$1"
+    local expected="$2"
+    local response=""
+
+    have_cmd curl || return 1
+    response="$(curl --fail --silent --max-time 3 "http://127.0.0.1:$port/provider_info" 2>/dev/null || true)"
+    if [ "$expected" = "xtts" ]; then
+        if printf '%s' "$response" | grep -Eqi "\"provider\"[[:space:]]*:[[:space:]]*\"xtts(-fastapi)?\""; then
+            return 0
+        fi
+    elif printf '%s' "$response" | grep -Eqi "\"provider\"[[:space:]]*:[[:space:]]*\"${expected}\""; then
+        return 0
+    fi
+
+    # Released 8020 services predate provider_info. Their OpenAPI routes and
+    # title provide a stable, non-port-only compatibility fingerprint.
+    response="$(curl --fail --silent --max-time 3 "http://127.0.0.1:$port/openapi.json" 2>/dev/null || true)"
+    case "$expected" in
+        chatterbox)
+            printf '%s' "$response" | grep -Eqi 'Chatterbox TTS API|/sample/\{file_name\}|/speakers"'
+            ;;
+        pockettts)
+            printf '%s' "$response" | grep -Eqi '/set_tts_settings|/tts_to_audio_form'
+            ;;
+        xtts)
+            printf '%s' "$response" | grep -Eqi '/languages'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+check_local_tts_service() {
+    local label="$1"
+    local provider="$2"
+    local active_port="$3"
+    local dedicated_port="$4"
+    local mode="dedicated"
+
+    if [ "$active_port" = "8020" ]; then
+        mode="legacy"
+    fi
+    if probe_tts_provider "$active_port" "$provider"; then
+        ok "$label is healthy on $mode port 127.0.0.1:$active_port"
+        return 0
+    fi
+    if port_open "$active_port"; then
+        fail "$label expects 127.0.0.1:$active_port, but another service owns that port"
+        return 1
+    fi
+    if [ "$active_port" != "$dedicated_port" ] && probe_tts_provider "$dedicated_port" "$provider"; then
+        warn "$label is running on dedicated port $dedicated_port but its saved port is $active_port"
+        return 1
+    fi
+    warn "$label is installed but not running on configured $mode port $active_port"
+    return 1
 }
 
 install_package() {
@@ -468,7 +544,7 @@ check_ports() {
     check_port_report "Dialectic web UI" "$DIALECTIC_UI_PORT" warn
 
     if [ -e /home/dwemer/xtts-api-server/start.sh ]; then
-        check_port_report "XTTS FastAPI" "$XTTS_PORT" warn
+        check_local_tts_service "XTTS FastAPI" xtts "$XTTS_PORT" "$XTTS_PORT"
     fi
     if [ -e /home/dwemer/omnivoice-tts/start-gpu.sh ]; then
         check_port_report "OmniVoice TTS" "$OMNIVOICE_PORT" warn
@@ -476,13 +552,22 @@ check_ports() {
     if [ -e /home/dwemer/parakeet-api-server/start.sh ]; then
         check_port_report "Parakeet STT" "$PARAKEET_PORT" warn
     fi
-    if [ -e /home/dwemer/chatterbox/start.sh ]; then
-        check_port_report "Chatterbox TTS" "$CHATTERBOX_PORT" warn
+    if [ -e /home/dwemer/chatterbox/start.sh ] \
+        || [ -e /home/dwemer/chatterbox/start-gpu.sh ] \
+        || [ -e /home/dwemer/chatterbox/start-cpu.sh ]; then
+        local chatterbox_port
+        chatterbox_port="$(read_tts_service_port /home/dwemer/chatterbox/.dwemerdistro-port "$CHATTERBOX_LEGACY_PORT")"
+        check_local_tts_service "Chatterbox TTS" chatterbox "$chatterbox_port" "$CHATTERBOX_DEDICATED_PORT"
     fi
     if [ -e /home/dwemer/audio.cpp/start.sh ]; then
         check_port_report "PocketTTS audio.cpp" "$POCKETTTS_AUDIOCPP_PORT" warn
-    elif [ -e /home/dwemer/pocket-tts/start.sh ]; then
-        check_port_report "PocketTTS Python" "$POCKETTTS_PORT" warn
+    fi
+    if [ -e /home/dwemer/pocket-tts/start.sh ] \
+        || [ -e /home/dwemer/pocket-tts/start-gpu.sh ] \
+        || [ -e /home/dwemer/pocket-tts/start-cpu.sh ]; then
+        local pockettts_port
+        pockettts_port="$(read_tts_service_port /home/dwemer/pocket-tts/.dwemerdistro-port "$POCKETTTS_LEGACY_PORT")"
+        check_local_tts_service "PocketTTS Python" pockettts "$pockettts_port" "$POCKETTTS_DEDICATED_PORT"
     fi
 }
 

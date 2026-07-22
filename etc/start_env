@@ -15,9 +15,28 @@ fi
 XTTS_PORT="${XTTS_PORT:-8020}"
 OMNIVOICE_PORT="${OMNIVOICE_PORT:-8021}"
 PARAKEET_PORT="${PARAKEET_PORT:-8022}"
-CHATTERBOX_PORT="${CHATTERBOX_PORT:-8023}"
-POCKETTTS_PORT="${POCKETTTS_PORT:-8024}"
+CHATTERBOX_LEGACY_PORT="${CHATTERBOX_LEGACY_PORT:-8020}"
+CHATTERBOX_DEDICATED_PORT="${CHATTERBOX_DEDICATED_PORT:-8023}"
+POCKETTTS_LEGACY_PORT="${POCKETTTS_LEGACY_PORT:-8020}"
+POCKETTTS_DEDICATED_PORT="${POCKETTTS_DEDICATED_PORT:-8024}"
 POCKETTTS_AUDIOCPP_PORT="${POCKETTTS_AUDIOCPP_PORT:-8086}"
+
+read_tts_service_port() {
+    local port_file="$1"
+    local fallback="$2"
+    local value=""
+
+    if [ -f "$port_file" ]; then
+        value="$(tr -d '[:space:]' < "$port_file")"
+    fi
+    case "$value" in
+        ''|*[!0-9]*) value="$fallback" ;;
+    esac
+    printf '%s\n' "$value"
+}
+
+CHATTERBOX_ACTIVE_PORT="$(read_tts_service_port /home/dwemer/chatterbox/.dwemerdistro-port "$CHATTERBOX_LEGACY_PORT")"
+POCKETTTS_ACTIVE_PORT="$(read_tts_service_port /home/dwemer/pocket-tts/.dwemerdistro-port "$POCKETTTS_LEGACY_PORT")"
 
 # Clean tmp
 find /tmp -type f -mtime +7 -delete 
@@ -500,7 +519,7 @@ fi
 if [ -f /home/dwemer/chatterbox/start.sh ];then
 	echo -ne  "Starting Chatterbox"
 	su dwemer -c /home/dwemer/chatterbox/start.sh
-	if ! check_port "$CHATTERBOX_PORT"; then
+	if ! check_port "$CHATTERBOX_ACTIVE_PORT"; then
 		L_CHATTERBOX=1
 	fi
 else
@@ -516,10 +535,10 @@ if [ -f /home/dwemer/audio.cpp/start.sh ];then
 		L_POCKETTTS=1
 	fi
 elif [ -f /home/dwemer/pocket-tts/start.sh ];then
-	ACTIVE_POCKETTTS_PORT="$POCKETTTS_PORT"
+	ACTIVE_POCKETTTS_PORT="$POCKETTTS_ACTIVE_PORT"
 	echo -ne  "Starting pocket-tts"
 	su dwemer -c /home/dwemer/pocket-tts/start.sh
-	if ! check_port "$POCKETTTS_PORT"; then
+	if ! check_port "$POCKETTTS_ACTIVE_PORT"; then
 		L_POCKETTTS=1
 	fi
 else
@@ -676,7 +695,7 @@ if [ -z "$L_PARAKEET" ]; then
 fi
 
 if [ -z "$L_CHATTERBOX" ]; then
-	echo Chatterbox API: http://$ipaddress:$CHATTERBOX_PORT
+	echo Chatterbox API: http://$ipaddress:$CHATTERBOX_ACTIVE_PORT
 fi
 
 if [ -z "$L_POCKETTTS" ]; then
