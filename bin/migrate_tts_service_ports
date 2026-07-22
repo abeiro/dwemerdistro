@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ -f /etc/dwemerdistro_services.conf ]; then
+    # shellcheck disable=SC1091
+    source /etc/dwemerdistro_services.conf
+fi
+
+CHATTERBOX_DEDICATED_PORT="${CHATTERBOX_DEDICATED_PORT:-8023}"
+POCKETTTS_DEDICATED_PORT="${POCKETTTS_DEDICATED_PORT:-8024}"
+BACKUP_ROOT="${DWEMER_TTS_PORT_BACKUP_ROOT:-/home/dwemer/deploy-backups}"
+PGUSER="${PGUSER:-dwemer}"
+PGHOST="${PGHOST:-127.0.0.1}"
+DATABASES="${DWEMER_TTS_DATABASES:-dwemer dialectic stobe}"
+STOBE_DATABASE="${DWEMER_TTS_STOBE_DATABASE:-stobe}"
+export PGPASSWORD="${PGPASSWORD:-dwemer}"
+
+PROVIDER=""
+DRY_RUN=0
+
+usage() {
+    cat <<'EOF'
+Usage: migrate_tts_service_ports --provider chatterbox|pockettts [--dry-run]
+
+Migrates only known DwemerDistro-managed loopback connector rows after the
+selected service identifies itself on its dedicated port. Normal updates do
+not invoke this command.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --provider)
+            PROVIDER="${2:-}"
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            printf '[FAIL] Unknown option: %s\n' "$1" >&2
+            usage >&2
+            exit 64
+            ;;
+    esac
+    shift
+done
+
+case "${PROVIDER,,}" in
+    chatterbox)
+        PROVIDER="chatterbox"
+        TARGET_PORT="$CHATTERBOX_DEDICATED_PORT"
+        PORT_FILE="/home/dwemer/chatterbox/.dwemerdistro-port"
+        ;;
+    pockettts|pocket_tts|pocket-tts)
+        PROVIDER="pockettts"
+        TARGET_PORT="$POCKETTTS_DEDICATED_PORT"
+        PORT_FILE="/home/dwemer/pocket-tts/.dwemerdistro-port"
+        ;;
+    *)
+        printf '[FAIL] --provider must be chatterbox or pockettts.\n' >&2
+        usage >&2
+        exit 64
+        ;;
+esac
+
+active_port=""
+if [ -f "$PORT_FILE" ]; then
+    active_port="$(tr -d '[:space:]' < "$PORT_FILE")"
+fi
+if [ "$active_port" != "$TARGET_PORT" ]; then
+    printf '[FAIL] %s is not configured for dedicated port %s (saved: %s).\n' \
+        "$PROVIDER" "$TARGET_PORT" "${active_port:-legacy 8020}" >&2
+    exit 2
+fi
+
+provider_json="$(curl --fail --silent --show-error --max-time 5 \
+    "http://127.0.0.1:$TARGET_PORT/provider_info")" || {
+    printf '[FAIL] %s did not respond on dedicated port %s. Connector rows were not changed.\n' \
+        "$PROVIDER" "$TARGET_PORT" >&2
+    exit 3
+}
+
+actual_provider="$(python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("provider","")).strip().lower())' \
+    <<< "$provider_json" 2>/dev/null || true)"
+case "$actual_provider" in
+    pocket_tts|pocket-tts) actual_provider="pockettts" ;;
+esac
+if [ "$actual_provider" != "$PROVIDER" ]; then
+    printf '[FAIL] Expected %s on port %s, but provider_info reported %s. Connector rows were not changed.\n' \
+        "$PROVIDER" "$TARGET_PORT" "${actual_provider:-unknown}" >&2
+    exit 4
+fi
+
+database_exists() {
+    psql -h "$PGHOST" -U "$PGUSER" -d postgres -Atqc \
+        "SELECT 1 FROM pg_database WHERE datname = '$1'" 2>/dev/null | grep -qx 1
+}
+
+table_exists() {
+    psql -h "$PGHOST" -U "$PGUSER" -d "$1" -Atqc \
+        "SELECT to_regclass('public.core_tts_connector') IS NOT NULL" 2>/dev/null | grep -qx t
+}
+
+managed_predicate() {
+    local db="$1"
+    if [ "$db" = "$STOBE_DATABASE" ]; then
+        if [ "$PROVIDER" = "chatterbox" ]; then
+            printf "%s" "connector_type = 'chatterbox'
+ AND lower(coalesce(name, '')) IN ('ddistro chatterbox', 'chatterbox default')
+ AND lower(rtrim(coalesce(base_url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020')"
+        else
+            printf "%s" "connector_type = 'pocket_tts'
+ AND lower(coalesce(name, '')) IN ('ddistro pockettts', 'pocket tts default')
+ AND lower(rtrim(coalesce(base_url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020')
+ AND lower(coalesce(config->>'api_format', 'legacy')) NOT IN ('audio_cpp', 'audiocpp')"
+        fi
+    elif [ "$PROVIDER" = "chatterbox" ]; then
+        printf "%s" "driver = 'chatterbox'
+ AND lower(coalesce(label, '')) IN ('ddistro chatterbox', 'chatterbox default')
+ AND lower(rtrim(coalesce(url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020')"
+    else
+        printf "%s" "driver = 'pockettts'
+ AND lower(coalesce(label, '')) IN ('ddistro pockettts', 'pocket tts default')
+ AND lower(rtrim(coalesce(url, ''), '/')) IN ('http://127.0.0.1:8020', 'http://localhost:8020')
+ AND lower(coalesce(metadata->>'api_format', 'legacy')) NOT IN ('audio_cpp', 'audiocpp')"
+    fi
+}
+
+count_managed_rows() {
+    local db="$1"
+    local predicate
+    predicate="$(managed_predicate "$db")"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$db" -Atqc \
+        "SELECT count(*) FROM public.core_tts_connector WHERE $predicate"
+}
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    total=0
+    for db in $DATABASES; do
+        if ! database_exists "$db" || ! table_exists "$db"; then
+            printf '[SKIP] %s has no core_tts_connector table.\n' "$db"
+            continue
+        fi
+        count="$(count_managed_rows "$db")"
+        total=$((total + count))
+        printf '[DRY RUN] %s: %s managed %s connector row(s) would move to port %s.\n' \
+            "$db" "$count" "$PROVIDER" "$TARGET_PORT"
+    done
+    printf '[DRY RUN] Total rows: %s. No database changes were made.\n' "$total"
+    exit 0
+fi
+
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_DIR="$BACKUP_ROOT/tts-service-ports-$PROVIDER-$STAMP"
+mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+
+processed=0
+rows_changed=0
+for db in $DATABASES; do
+    if ! database_exists "$db" || ! table_exists "$db"; then
+        printf '[SKIP] %s has no core_tts_connector table.\n' "$db"
+        continue
+    fi
+
+    predicate="$(managed_predicate "$db")"
+    count="$(count_managed_rows "$db")"
+    if [ "$count" -eq 0 ]; then
+        printf '[SKIP] %s has no managed legacy %s endpoint.\n' "$db" "$PROVIDER"
+        continue
+    fi
+
+    psql -h "$PGHOST" -U "$PGUSER" -d "$db" -Atqc \
+        "SELECT row_to_json(c) FROM public.core_tts_connector c WHERE $predicate ORDER BY id" \
+        > "$BACKUP_DIR/$db-core_tts_connector.jsonl"
+
+    if [ "$db" = "$STOBE_DATABASE" ]; then
+        psql -h "$PGHOST" -U "$PGUSER" -d "$db" -Atqc \
+            "SELECT format('UPDATE public.core_tts_connector SET base_url = %L WHERE id = %s;', base_url, id)
+               FROM public.core_tts_connector WHERE $predicate ORDER BY id" \
+            > "$BACKUP_DIR/$db-rollback.sql"
+        psql -v ON_ERROR_STOP=1 -h "$PGHOST" -U "$PGUSER" -d "$db" -c \
+            "BEGIN; UPDATE public.core_tts_connector SET base_url = 'http://127.0.0.1:$TARGET_PORT' WHERE $predicate; COMMIT;" >/dev/null
+    else
+        psql -h "$PGHOST" -U "$PGUSER" -d "$db" -Atqc \
+            "SELECT format('UPDATE public.core_tts_connector SET url = %L WHERE id = %s;', url, id)
+               FROM public.core_tts_connector WHERE $predicate ORDER BY id" \
+            > "$BACKUP_DIR/$db-rollback.sql"
+        psql -v ON_ERROR_STOP=1 -h "$PGHOST" -U "$PGUSER" -d "$db" -c \
+            "BEGIN; UPDATE public.core_tts_connector SET url = 'http://127.0.0.1:$TARGET_PORT' WHERE $predicate; COMMIT;" >/dev/null
+    fi
+
+    processed=$((processed + 1))
+    rows_changed=$((rows_changed + count))
+    printf '[OK] %s: migrated %s managed %s connector row(s).\n' "$db" "$count" "$PROVIDER"
+done
+
+if [ "$processed" -eq 0 ]; then
+    rmdir "$BACKUP_DIR" 2>/dev/null || true
+    printf '[SKIP] No installed database required %s connector migration.\n' "$PROVIDER"
+    exit 0
+fi
+
+printf '[OK] Migrated %s row(s) after provider identity validation.\n' "$rows_changed"
+printf '[OK] Connector backups and rollback SQL: %s\n' "$BACKUP_DIR"

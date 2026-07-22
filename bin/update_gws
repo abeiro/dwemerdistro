@@ -229,7 +229,7 @@ ensure_dialectic_runtime_permissions() {
 }
 
 ensure_dialectic_repo_exists() {
-    local target_branch="${1:-dialectic}"
+    local target_branch="${1:-dev}"
     local repo_path="/var/www/html/DialecticServer"
     local backup_path=""
 
@@ -492,7 +492,7 @@ fi
 
 if [ "$UPDATE_DIALECTIC" -eq 1 ]; then
     DIALECTIC_INITIAL_INSTALL=0
-    if ensure_dialectic_repo_exists "dialectic"; then
+    if ensure_dialectic_repo_exists "dev"; then
         cd /var/www/html/DialecticServer || true
         if [ "$DIALECTIC_INITIAL_INSTALL" -eq 0 ]; then
             BRANCH=$(git branch --show-current)
@@ -722,6 +722,25 @@ sudo chown -R dwemer:dwemer /home/dwemer/parakeet-api-server
 sudo chmod -R 755 /home/dwemer/parakeet-api-server
 printf "${GREEN}[SUCCESS] Parakeet updated successfully${NC}\n"
 
+# Preserve explicit legacy ports before service repositories gain dedicated
+# port support. Fresh clones have no venv and therefore receive no marker;
+# their installers will select the dedicated port.
+preserve_legacy_tts_port() {
+    local service_root="$1"
+    local installed_path="$2"
+    local port_file="$service_root/.dwemerdistro-port"
+
+    if [ -e "$installed_path" ] && [ ! -f "$port_file" ]; then
+        printf '8020\n' | sudo tee "$port_file" >/dev/null
+        sudo chown dwemer:dwemer "$port_file"
+        sudo chmod 600 "$port_file"
+        print_success "Preserved legacy port 8020 for $(basename "$service_root")."
+    fi
+}
+
+preserve_legacy_tts_port /home/dwemer/chatterbox /home/dwemer/chatterbox/venv
+preserve_legacy_tts_port /home/dwemer/pocket-tts /home/dwemer/pocket-tts/venv
+
 # Chatterbox update/install
 if [ ! -d /home/dwemer/chatterbox ];then
     cd /home/dwemer/
@@ -835,6 +854,11 @@ if [ -d /home/dwemer/omnivoice-tts ]; then
 else
     printf "${YELLOW}[SKIP] OmniVoice TTS not installed; install it from DwemerDistro Installed Components.${NC}\n"
 fi
+
+# Port migration is intentionally not part of a normal repository update.
+# The launcher invokes the provider-specific migration only after the selected
+# service is healthy on its dedicated port.
+print_warning "Existing Chatterbox/PocketTTS ports were preserved; dedicated-port migration is opt-in."
 
 # CHIM MCP Server update/install
 print_warning "Skipping DwemerDistro MCP update for now."
