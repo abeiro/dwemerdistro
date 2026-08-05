@@ -22,6 +22,15 @@ POCKETTTS_LEGACY_PORT=8020
 POCKETTTS_DEDICATED_PORT=8024
 POCKETTTS_AUDIOCPP_PORT=8086
 POSTGRES_PORT=5432
+HERIKA_DATABASE="dwemer"
+HERIKA_DB_USER="dwemer"
+HERIKA_DB_PASSWORD="dwemer"
+DOCTOR_BACKUP_ROOT="/home/dwemer/DwemerDistro-Backups/Doctor"
+DOCTOR_MANAGE_SERVICES=1
+HERIKA_CLONE_SQL_PATH=""
+HERIKA_DB_UPDATE_RUNNER=""
+HERIKA_REQUIRED_CORE_TABLES=8
+HERIKA_MIN_RECOVERY_TABLES=50
 
 if [ -f /etc/dwemerdistro_services.conf ]; then
     # shellcheck disable=SC1091
@@ -310,6 +319,7 @@ check_dependencies() {
     check_dependency git "" 0
     check_dependency service "" 0
     check_dependency psql "" 0
+    check_dependency pg_dump "" 0
     check_dependency pg_isready "" 0
 
     if have_cmd php; then
@@ -403,6 +413,435 @@ check_postgres() {
         else
             warn "PostgreSQL service start failed"
         fi
+    fi
+}
+
+herika_psql() {
+    PGPASSWORD="$HERIKA_DB_PASSWORD" psql \
+        -X \
+        -v ON_ERROR_STOP=1 \
+        -h 127.0.0.1 \
+        -p "$POSTGRES_PORT" \
+        -U "$HERIKA_DB_USER" \
+        -d "$HERIKA_DATABASE" \
+        "$@"
+}
+
+herika_schema_core_table_count() {
+    local schema="$1"
+
+    case "$schema" in
+        ''|*[!a-z0-9_]*) return 1 ;;
+    esac
+
+    herika_psql -tAc "
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_schema = '$schema'
+          AND table_name IN (
+              'eventlog',
+              'memory',
+              'memory_summary',
+              'animations_custom',
+              'npc_templates',
+              'npc_templates_custom',
+              'database_versioning',
+              'conf_opts'
+          )
+    " 2>/dev/null | tr -d '[:space:]'
+}
+
+herika_schema_table_count() {
+    local schema="$1"
+
+    case "$schema" in
+        ''|*[!a-z0-9_]*) return 1 ;;
+    esac
+
+    herika_psql -tAc "
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_schema = '$schema'
+    " 2>/dev/null | tr -d '[:space:]'
+}
+
+herika_schema_eventlog_count() {
+    local schema="$1"
+
+    case "$schema" in
+        ''|*[!a-z0-9_]*) return 1 ;;
+    esac
+
+    herika_psql -tAc "SELECT COUNT(*) FROM $schema.eventlog" 2>/dev/null | tr -d '[:space:]'
+}
+
+is_safe_profile_schema() {
+    local schema="$1"
+    local suffix=""
+
+    case "$schema" in
+        chim_profile_*) suffix="${schema#chim_profile_}" ;;
+        *) return 1 ;;
+    esac
+    case "$suffix" in
+        ''|*[!a-z0-9_]*) return 1 ;;
+    esac
+    return 0
+}
+
+# A recovery source must contain the old and current tables that failed in the
+# reported partial restore, plus the exact eventlog row count recorded when the
+# snapshot was created.
+is_complete_profile_snapshot() {
+    local schema="$1"
+    local expected_eventlog_count="$2"
+    local core_count
+    local table_count
+    local eventlog_count
+
+    is_safe_profile_schema "$schema" || return 1
+    case "$expected_eventlog_count" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+
+    core_count="$(herika_schema_core_table_count "$schema" || true)"
+    table_count="$(herika_schema_table_count "$schema" || true)"
+    eventlog_count="$(herika_schema_eventlog_count "$schema" || true)"
+
+    [ "$core_count" = "$HERIKA_REQUIRED_CORE_TABLES" ] \
+        && [ "${table_count:-0}" -ge "$HERIKA_MIN_RECOVERY_TABLES" ] 2>/dev/null \
+        && [ "$eventlog_count" = "$expected_eventlog_count" ]
+}
+
+# Back up the complete database before any recovery changes are attempted.
+create_herika_database_backup() {
+    local timestamp
+    local backup_path
+
+    timestamp="$(date '+%Y%m%d-%H%M%S')"
+    backup_path="$DOCTOR_BACKUP_ROOT/${HERIKA_DATABASE}-before-schema-recovery-${timestamp}.dump"
+
+    install -d -m 0700 "$DOCTOR_BACKUP_ROOT" || return 1
+    if ! PGPASSWORD="$HERIKA_DB_PASSWORD" pg_dump \
+        -h 127.0.0.1 \
+        -p "$POSTGRES_PORT" \
+        -U "$HERIKA_DB_USER" \
+        -d "$HERIKA_DATABASE" \
+        --format=custom \
+        --file="$backup_path"; then
+        return 1
+    fi
+    if [ ! -s "$backup_path" ]; then
+        return 1
+    fi
+
+    printf '%s\n' "$backup_path"
+}
+
+# Quiesce database writers while preserving whether Apache was running.
+prepare_herika_recovery_runtime() {
+    HERIKA_APACHE_WAS_RUNNING=0
+
+    if [ "$DOCTOR_MANAGE_SERVICES" != "1" ]; then
+        return 0
+    fi
+
+    if have_cmd service && service apache2 status >/dev/null 2>&1; then
+        HERIKA_APACHE_WAS_RUNNING=1
+        if ! service apache2 stop >/dev/null 2>&1; then
+            return 1
+        fi
+    fi
+
+    pkill -f "$HERIKA_ROOT/service/start.sh" >/dev/null 2>&1 || true
+    pkill -f "$HERIKA_ROOT/service/manager.php" >/dev/null 2>&1 || true
+    return 0
+}
+
+restore_herika_recovery_runtime() {
+    if [ "$DOCTOR_MANAGE_SERVICES" = "1" ] \
+        && [ "${HERIKA_APACHE_WAS_RUNNING:-0}" = "1" ] \
+        && have_cmd service; then
+        service apache2 start >/dev/null 2>&1 || return 1
+    fi
+    return 0
+}
+
+# Clone and validate inside one transaction so a failed recovery restores the
+# original public schema automatically.
+recover_herika_public_schema() {
+    local source_schema="$1"
+
+    is_safe_profile_schema "$source_schema" || return 1
+
+    herika_psql >/dev/null <<SQL
+BEGIN;
+DROP SCHEMA IF EXISTS public CASCADE;
+CREATE SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+SELECT chim_meta.clone_schema('$source_schema', 'public');
+DO \$doctor\$
+DECLARE
+    core_table_count integer;
+    source_eventlog_count bigint;
+    public_eventlog_count bigint;
+    source_template_count bigint;
+    public_template_count bigint;
+BEGIN
+    SELECT COUNT(*) INTO core_table_count
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN (
+          'eventlog',
+          'memory',
+          'memory_summary',
+          'animations_custom',
+          'npc_templates',
+          'npc_templates_custom',
+          'database_versioning',
+          'conf_opts'
+      );
+    IF core_table_count <> $HERIKA_REQUIRED_CORE_TABLES THEN
+        RAISE EXCEPTION 'Recovered public schema has only % of $HERIKA_REQUIRED_CORE_TABLES required core tables', core_table_count;
+    END IF;
+
+    EXECUTE format('SELECT COUNT(*) FROM %I.eventlog', '$source_schema') INTO source_eventlog_count;
+    SELECT COUNT(*) INTO public_eventlog_count FROM public.eventlog;
+    IF source_eventlog_count <> public_eventlog_count THEN
+        RAISE EXCEPTION 'eventlog row count mismatch after recovery';
+    END IF;
+
+    EXECUTE format('SELECT COUNT(*) FROM %I.npc_templates', '$source_schema') INTO source_template_count;
+    SELECT COUNT(*) INTO public_template_count FROM public.npc_templates;
+    IF source_template_count <> public_template_count THEN
+        RAISE EXCEPTION 'npc_templates row count mismatch after recovery';
+    END IF;
+END
+\$doctor\$;
+COMMIT;
+SQL
+}
+
+check_herika_database() {
+    info "Checking Herika database core schema"
+
+    local clone_sql_path="${HERIKA_CLONE_SQL_PATH:-$HERIKA_ROOT/lib/schema_clone_function.sql}"
+    local db_update_runner="${HERIKA_DB_UPDATE_RUNNER:-$HERIKA_ROOT/debug/apply_db_updates.php}"
+
+    if ! have_cmd psql; then
+        warn "psql unavailable; cannot check the Herika database schema"
+        return
+    fi
+    if ! herika_psql -tAc "SELECT 1" >/dev/null 2>&1; then
+        fail "Cannot connect to Herika database $HERIKA_DATABASE"
+        return
+    fi
+
+    local public_core_count
+    local public_table_count
+    public_core_count="$(herika_schema_core_table_count public || true)"
+    public_table_count="$(herika_schema_table_count public || true)"
+    if [ "$public_core_count" = "$HERIKA_REQUIRED_CORE_TABLES" ] \
+        && [ "${public_table_count:-0}" -ge "$HERIKA_MIN_RECOVERY_TABLES" ] 2>/dev/null; then
+        ok "Herika database core schema is available"
+        return
+    fi
+
+    warn "Herika public schema is incomplete (${public_core_count:-0} of $HERIKA_REQUIRED_CORE_TABLES core tables; ${public_table_count:-0} total tables found)"
+    if [ "$MODE" != "repair" ]; then
+        fail "Run Distro Doctor in repair mode to attempt a guarded snapshot recovery"
+        return
+    fi
+    if ! have_cmd pg_dump; then
+        fail "pg_dump unavailable; refusing database recovery without a backup"
+        return
+    fi
+
+    local profile_table_exists
+    profile_table_exists="$(herika_psql -tAc "SELECT CASE WHEN to_regclass('chim_meta.playthrough_profiles') IS NULL THEN 0 ELSE 1 END" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [ "$profile_table_exists" != "1" ]; then
+        fail "Playthrough snapshot metadata is unavailable; refusing automatic database recovery"
+        return
+    fi
+
+    local active_profile_count
+    active_profile_count="$(herika_psql -tAc "
+        SELECT COUNT(*)
+        FROM chim_meta.playthrough_profiles
+        WHERE is_active = true
+    " 2>/dev/null | tr -d '[:space:]' || true)"
+    if [ "$active_profile_count" != "1" ]; then
+        fail "Expected exactly one active playthrough, found ${active_profile_count:-0}; refusing automatic recovery"
+        return
+    fi
+
+    local active_row
+    local active_profile_id
+    local active_created_epoch
+    local active_schema
+    local active_eventlog_count
+    active_row="$(herika_psql -tA -F '|' -c "
+        SELECT id,
+               EXTRACT(EPOCH FROM created_at)::bigint,
+               COALESCE(schema_name, ''),
+               COALESCE(eventlog_count, -1)
+        FROM chim_meta.playthrough_profiles
+        WHERE is_active = true
+        LIMIT 1
+    " 2>/dev/null || true)"
+    IFS='|' read -r active_profile_id active_created_epoch active_schema active_eventlog_count <<<"$active_row"
+    case "$active_profile_id" in
+        ''|*[!0-9]*)
+            fail "Active playthrough metadata is invalid; refusing automatic recovery"
+            return
+            ;;
+    esac
+    case "$active_created_epoch" in
+        ''|*[!0-9]*)
+            fail "Active playthrough metadata is invalid; refusing automatic recovery"
+            return
+            ;;
+    esac
+
+    local source_profile_id=""
+    local source_schema=""
+    local source_eventlog_count=""
+    local valid_newer_count=0
+    local candidate_rows
+    candidate_rows="$(herika_psql -tA -F '|' -c "
+        SELECT id, schema_name, COALESCE(eventlog_count, -1)
+        FROM chim_meta.playthrough_profiles
+        WHERE is_active = false
+          AND storage_type = 'schema'
+          AND created_at > (
+              SELECT created_at
+              FROM chim_meta.playthrough_profiles
+              WHERE id = $active_profile_id
+          )
+        ORDER BY created_at DESC, id DESC
+    " 2>/dev/null || true)"
+
+    while IFS='|' read -r candidate_id candidate_schema candidate_eventlog_count; do
+        [ -n "$candidate_id" ] || continue
+        case "$candidate_id" in
+            *[!0-9]*) continue ;;
+        esac
+        if is_complete_profile_snapshot "$candidate_schema" "$candidate_eventlog_count"; then
+            valid_newer_count=$((valid_newer_count + 1))
+            source_profile_id="$candidate_id"
+            source_schema="$candidate_schema"
+            source_eventlog_count="$candidate_eventlog_count"
+        fi
+    done <<EOF
+$candidate_rows
+EOF
+
+    if [ "$valid_newer_count" -gt 1 ]; then
+        fail "Found $valid_newer_count complete snapshots newer than the active playthrough; refusing to guess which one was selected"
+        return
+    fi
+
+    if [ "$valid_newer_count" -eq 0 ]; then
+        if ! is_complete_profile_snapshot "$active_schema" "$active_eventlog_count"; then
+            fail "No single complete recovery snapshot could be identified; public schema was not changed"
+            return
+        fi
+        source_profile_id="$active_profile_id"
+        source_schema="$active_schema"
+        source_eventlog_count="$active_eventlog_count"
+    fi
+
+    if [ ! -f "$clone_sql_path" ]; then
+        fail "Current CHIM snapshot clone definition is missing; run Update System before recovery"
+        return
+    fi
+
+    if ! prepare_herika_recovery_runtime; then
+        fail "Could not stop Herika database writers; recovery was not attempted"
+        restore_herika_recovery_runtime >/dev/null 2>&1 || true
+        return
+    fi
+
+    local backup_path
+    if ! backup_path="$(create_herika_database_backup)"; then
+        fail "Database backup failed; public schema was not changed"
+        restore_herika_recovery_runtime >/dev/null 2>&1 || true
+        return
+    fi
+    ok "Created pre-recovery database backup: $backup_path"
+
+    if ! herika_psql -f "$clone_sql_path" >/dev/null 2>&1; then
+        fail "Could not install the current CHIM snapshot clone function; public schema was not changed"
+        restore_herika_recovery_runtime >/dev/null 2>&1 || true
+        return
+    fi
+
+    if ! recover_herika_public_schema "$source_schema"; then
+        fail "Snapshot recovery failed and was rolled back; backup retained at $backup_path"
+        restore_herika_recovery_runtime >/dev/null 2>&1 || true
+        return
+    fi
+    fix "Restored Herika public schema from snapshot $source_schema"
+
+    local update_log="$DOCTOR_BACKUP_ROOT/db-updates-after-recovery-$(date '+%Y%m%d-%H%M%S').log"
+    local recovery_ok=1
+    if [ -f "$db_update_runner" ]; then
+        if php "$db_update_runner" >"$update_log" 2>&1; then
+            fix "Applied Herika database updates after recovery"
+        else
+            fail "Herika schema was restored, but database updates failed; see $update_log"
+            recovery_ok=0
+        fi
+    else
+        fail "Herika database update runner is missing; restored snapshot was not marked active"
+        recovery_ok=0
+    fi
+
+    public_core_count="$(herika_schema_core_table_count public || true)"
+    public_table_count="$(herika_schema_table_count public || true)"
+    local recovered_eventlog_count
+    recovered_eventlog_count="$(herika_schema_eventlog_count public || true)"
+    if [ "$public_core_count" != "$HERIKA_REQUIRED_CORE_TABLES" ] \
+        || [ "${public_table_count:-0}" -lt "$HERIKA_MIN_RECOVERY_TABLES" ] 2>/dev/null \
+        || [ "$recovered_eventlog_count" != "$source_eventlog_count" ]; then
+        fail "Herika database core schema is still incomplete after recovery"
+        recovery_ok=0
+    fi
+
+    if [ "$recovery_ok" = "1" ]; then
+        if herika_psql >/dev/null <<SQL
+BEGIN;
+UPDATE chim_meta.playthrough_profiles SET is_active = false;
+UPDATE chim_meta.playthrough_profiles SET is_active = true WHERE id = $source_profile_id;
+COMMIT;
+SQL
+        then
+            fix "Marked recovered snapshot $source_schema active"
+        else
+            fail "Database was repaired, but the recovered snapshot could not be marked active"
+            recovery_ok=0
+        fi
+    fi
+
+    if ! restore_herika_recovery_runtime; then
+        fail "Herika schema was restored, but Apache could not be restarted"
+        return
+    fi
+
+    if [ "$recovery_ok" = "1" ] && [ "$DOCTOR_MANAGE_SERVICES" = "1" ] && have_cmd curl; then
+        local home_response
+        home_response="$(curl --silent --max-time 15 "http://127.0.0.1:$HERIKA_UI_PORT/HerikaServer/ui/home.php" 2>/dev/null || true)"
+        if [ -z "$home_response" ] || printf '%s' "$home_response" | grep -Eqi 'Fatal error|Uncaught Exception'; then
+            fail "Herika database was restored, but the CHIM home page is still unavailable"
+            recovery_ok=0
+        else
+            ok "CHIM home page responds after database recovery"
+        fi
+    fi
+
+    if [ "$recovery_ok" = "1" ]; then
+        ok "Herika database is repaired and current database updates are applied"
     fi
 }
 
@@ -658,6 +1097,7 @@ check_disk
 check_permissions
 check_apache
 check_postgres
+check_herika_database
 check_background_service
 check_dialectic
 check_ports
