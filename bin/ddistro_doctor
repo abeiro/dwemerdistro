@@ -194,6 +194,7 @@ check_local_tts_service() {
     local provider="$2"
     local active_port="$3"
     local dedicated_port="$4"
+    local legacy_owner=""
     local mode="dedicated"
 
     if [ "$active_port" = "8020" ]; then
@@ -204,6 +205,21 @@ check_local_tts_service() {
         return 0
     fi
     if port_open "$active_port"; then
+        # Multiple older TTS installs may still point at shared port 8020. A
+        # healthy known provider there makes the inactive install optional,
+        # rather than a system-wide Doctor failure.
+        if [ "$active_port" = "$CHATTERBOX_LEGACY_PORT" ]; then
+            for candidate in xtts chatterbox pockettts; do
+                if probe_tts_provider "$active_port" "$candidate"; then
+                    legacy_owner="$candidate"
+                    break
+                fi
+            done
+        fi
+        if [ -n "$legacy_owner" ]; then
+            warn "$label is installed for shared legacy port 127.0.0.1:$active_port, but $legacy_owner is active there. Migrate or reinstall $label on dedicated port $dedicated_port if you intend to use it"
+            return 1
+        fi
         fail "$label expects 127.0.0.1:$active_port, but another service owns that port"
         return 1
     fi
