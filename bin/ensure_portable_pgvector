@@ -1,0 +1,160 @@
+#!/bin/bash
+
+set -u
+set -o pipefail
+
+KNOWN_NONPORTABLE_SHA256="2fa5a5778d11c3df5536c316792814eacde2847deaacc34daa48083f9fc10eae"
+PGVECTOR_SOURCE_COMMIT="3849f0fd3d6f7916de26d43e3a3c9f8e6615bc8f"
+PGVECTOR_SOURCE_ROOT="/home/dwemer/pgvector/pgvector"
+LOG_DIR="/var/log/dwemerdistro"
+LOG_PATH="$LOG_DIR/pgvector-portability.log"
+BUILD_ROOT=""
+POSTGRES_WAS_RUNNING=0
+POSTGRES_MAJOR=""
+
+cleanup() {
+    case "$BUILD_ROOT" in
+        /tmp/dwemer-pgvector-portable.*)
+            rm -rf -- "$BUILD_ROOT"
+            ;;
+    esac
+}
+
+fail() {
+    printf '[ERROR] %s\n' "$1" >&2
+    if [ -f "$LOG_PATH" ]; then
+        printf '[ERROR] Portable pgvector rebuild details: %s\n' "$LOG_PATH" >&2
+    fi
+    exit 1
+}
+
+download_postgres_headers() {
+    (
+        cd "$BUILD_ROOT" || exit 1
+        apt-get download "$POSTGRES_DEV_PACKAGE"
+    )
+}
+
+trap cleanup EXIT
+
+if [ "$(id -u)" -ne 0 ]; then
+    printf '[ERROR] Portable pgvector repair must run as root.\n' >&2
+    exit 1
+fi
+
+for command_name in apt-get awk dpkg-deb find gcc git install make mktemp pg_config pgrep readelf service sha256sum tar; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        printf '[ERROR] Required pgvector repair command is missing: %s\n' "$command_name" >&2
+        exit 1
+    fi
+done
+
+VECTOR_LIBRARY="$(pg_config --pkglibdir)/vector.so"
+if [ ! -f "$VECTOR_LIBRARY" ]; then
+    exit 0
+fi
+
+CURRENT_SHA256="$(sha256sum "$VECTOR_LIBRARY" | awk '{print $1}')"
+if [ "$CURRENT_SHA256" != "$KNOWN_NONPORTABLE_SHA256" ]; then
+    exit 0
+fi
+
+if [ ! -d "$PGVECTOR_SOURCE_ROOT/.git" ]; then
+    fail "Bundled pgvector source is unavailable at $PGVECTOR_SOURCE_ROOT."
+fi
+
+if ! git -c safe.directory="$PGVECTOR_SOURCE_ROOT" -C "$PGVECTOR_SOURCE_ROOT" cat-file -e "${PGVECTOR_SOURCE_COMMIT}^{commit}" 2>/dev/null; then
+    fail "Bundled pgvector source commit $PGVECTOR_SOURCE_COMMIT is unavailable."
+fi
+
+install -d -m 0755 "$LOG_DIR" || fail "Could not create $LOG_DIR."
+: > "$LOG_PATH" || fail "Could not write $LOG_PATH."
+
+BUILD_ROOT="$(mktemp -d /tmp/dwemer-pgvector-portable.XXXXXX)" || fail "Could not create a temporary pgvector build directory."
+
+POSTGRES_MAJOR="$(pg_config --version | awk '{split($2, parts, "."); print parts[1]}')"
+case "$POSTGRES_MAJOR" in
+    ''|*[!0-9]*)
+        fail "Could not determine the installed PostgreSQL major version."
+        ;;
+esac
+
+POSTGRES_DEV_PACKAGE="postgresql-server-dev-$POSTGRES_MAJOR"
+
+printf '[INFO] Rebuilding the bundled pgvector extension for portable CPU compatibility...\n'
+if ! git -c safe.directory="$PGVECTOR_SOURCE_ROOT" -C "$PGVECTOR_SOURCE_ROOT" archive "$PGVECTOR_SOURCE_COMMIT" 2>>"$LOG_PATH" \
+    | tar -x -C "$BUILD_ROOT" >>"$LOG_PATH" 2>&1; then
+    fail "Could not prepare the bundled pgvector source."
+fi
+
+if ! download_postgres_headers >>"$LOG_PATH" 2>&1; then
+    printf '[INFO] Refreshing package metadata before retrying the PostgreSQL header download.\n' >>"$LOG_PATH"
+    find "$BUILD_ROOT" -maxdepth 1 -type f -name "${POSTGRES_DEV_PACKAGE}_*.deb" -delete
+    apt-get update >>"$LOG_PATH" 2>&1 || true
+    if ! download_postgres_headers >>"$LOG_PATH" 2>&1; then
+        fail "Could not download the PostgreSQL server headers required to rebuild pgvector."
+    fi
+fi
+
+POSTGRES_DEV_ARCHIVE="$(find "$BUILD_ROOT" -maxdepth 1 -type f -name "${POSTGRES_DEV_PACKAGE}_*.deb" -print -quit)"
+if [ -z "$POSTGRES_DEV_ARCHIVE" ]; then
+    fail "The downloaded PostgreSQL server header package could not be found."
+fi
+
+POSTGRES_DEV_ROOT="$BUILD_ROOT/postgresql-dev"
+if ! dpkg-deb -x "$POSTGRES_DEV_ARCHIVE" "$POSTGRES_DEV_ROOT" >>"$LOG_PATH" 2>&1; then
+    fail "Could not extract the PostgreSQL server headers."
+fi
+
+POSTGRES_SERVER_INCLUDE="$POSTGRES_DEV_ROOT/usr/include/postgresql/$POSTGRES_MAJOR/server"
+if [ ! -f "$POSTGRES_SERVER_INCLUDE/postgres.h" ]; then
+    fail "The downloaded package did not contain PostgreSQL $POSTGRES_MAJOR server headers."
+fi
+
+MAKE_ARGS=(OPTFLAGS="" with_llvm=no PG_CPPFLAGS="-I$POSTGRES_SERVER_INCLUDE")
+if ! make -C "$BUILD_ROOT" "${MAKE_ARGS[@]}" >>"$LOG_PATH" 2>&1; then
+    fail "Portable pgvector compilation failed."
+fi
+
+if [ ! -f "$BUILD_ROOT/vector.so" ]; then
+    fail "Portable pgvector compilation did not produce vector.so."
+fi
+
+BUILD_PRODUCER="$(readelf --debug-dump=info "$BUILD_ROOT/vector.so" 2>/dev/null | awk '/DW_AT_producer/ {print; exit}')"
+case " $BUILD_PRODUCER " in
+    *' -march=x86-64 '*)
+        ;;
+    *)
+        fail "Portable pgvector compilation did not target generic x86-64."
+        ;;
+esac
+
+if service postgresql status >/dev/null 2>&1 || pgrep -x postgres >/dev/null 2>&1; then
+    POSTGRES_WAS_RUNNING=1
+    if ! service postgresql stop >>"$LOG_PATH" 2>&1; then
+        fail "PostgreSQL could not be stopped before replacing pgvector."
+    fi
+fi
+
+if ! make -C "$BUILD_ROOT" "${MAKE_ARGS[@]}" install >>"$LOG_PATH" 2>&1; then
+    if [ "$POSTGRES_WAS_RUNNING" -eq 1 ]; then
+        service postgresql start >>"$LOG_PATH" 2>&1 || true
+    fi
+    fail "Portable pgvector installation failed."
+fi
+
+INSTALLED_SHA256="$(sha256sum "$VECTOR_LIBRARY" | awk '{print $1}')"
+if [ "$INSTALLED_SHA256" = "$KNOWN_NONPORTABLE_SHA256" ]; then
+    if [ "$POSTGRES_WAS_RUNNING" -eq 1 ]; then
+        service postgresql start >>"$LOG_PATH" 2>&1 || true
+    fi
+    fail "pgvector installation retained the known non-portable binary."
+fi
+
+if [ "$POSTGRES_WAS_RUNNING" -eq 1 ]; then
+    if ! service postgresql start >>"$LOG_PATH" 2>&1; then
+        fail "PostgreSQL could not be restarted after pgvector repair."
+    fi
+fi
+
+printf '[SUCCESS] Installed a portable pgvector build.\n'
