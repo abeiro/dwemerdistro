@@ -593,7 +593,16 @@ fi
 if [ -f /home/dwemer/parakeet-api-server/start.sh ];then
 	echo -ne  "Starting Parakeet "
 	su dwemer -c /home/dwemer/parakeet-api-server/start.sh
-    check_port "$PARAKEET_PORT"
+	if ! check_port "$PARAKEET_PORT"; then
+		L_PARAKEET=1
+		echo "Parakeet did not become ready; speech-to-text is unavailable."
+		if [ -r /home/dwemer/parakeet-api-server/log.txt ]; then
+			echo "Last Parakeet log lines:"
+			tail -n 12 /home/dwemer/parakeet-api-server/log.txt | sed 's/^/  /'
+		else
+			echo "Parakeet log is unavailable at /home/dwemer/parakeet-api-server/log.txt"
+		fi
+	fi
 else
 	echo "Skipping Parakeet (not enabled)"
 	L_PARAKEET=1
