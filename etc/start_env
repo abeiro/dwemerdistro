@@ -166,6 +166,26 @@ EOF
     a2ensite dialectic.conf >/dev/null 2>&1 || true
 }
 
+ensure_portable_pgvector() {
+    local helper="/usr/local/bin/ensure_portable_pgvector"
+
+    if [ ! -x "$helper" ]; then
+        helper="/home/dwemer/dwemerdistro/bin/ensure_portable_pgvector"
+    fi
+
+    if [ ! -x "$helper" ]; then
+        echo "WARNING: Portable pgvector repair helper is unavailable."
+        return 1
+    fi
+
+    if ! "$helper"; then
+        echo "WARNING: Portable pgvector repair failed."
+        return 1
+    fi
+
+    return 0
+}
+
 ensure_stobe_database() {
     local server_root="/var/www/html/StobeServer"
     local schema_path="$server_root/data/schema.sql"
@@ -180,6 +200,11 @@ ensure_stobe_database() {
     fi
 
     mkdir -p "$server_root/log" >/dev/null 2>&1 || true
+
+    if ! ensure_portable_pgvector; then
+        echo "WARNING: Stobe database provisioning stopped before loading pgvector."
+        return 1
+    fi
 
     if ! pg_isready -d template1 -q; then
         echo "PostgreSQL is not ready; starting it before StobeServer database setup..."
@@ -290,6 +315,11 @@ ensure_dialectic_database() {
     if [ ! -d "$server_root" ]; then
         echo "Skipping DialecticServer DB bootstrap (DialecticServer not installed)."
         return 0
+    fi
+
+    if ! ensure_portable_pgvector; then
+        echo "WARNING: Dialectic database provisioning stopped before loading pgvector."
+        return 1
     fi
 
     export PGPASSWORD=dwemer

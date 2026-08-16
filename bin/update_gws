@@ -38,6 +38,26 @@ print_warning() {
     printf "${RED}[WARNING] %s${NC}\n" "$1"
 }
 
+ensure_portable_pgvector() {
+    local helper="/usr/local/bin/ensure_portable_pgvector"
+
+    if [ ! -x "$helper" ]; then
+        helper="/home/dwemer/dwemerdistro/bin/ensure_portable_pgvector"
+    fi
+
+    if [ ! -x "$helper" ]; then
+        print_warning "Portable pgvector repair helper is unavailable."
+        return 1
+    fi
+
+    if ! echo "$PASSWORD" | sudo -S "$helper"; then
+        print_warning "Portable pgvector repair failed."
+        return 1
+    fi
+
+    return 0
+}
+
 normalize_stobe_repo_path() {
     local canonical_path="/var/www/html/StobeServer"
     local legacy_path=""
@@ -129,6 +149,11 @@ ensure_stobe_database() {
     fi
 
     mkdir -p "$server_root/log" >/dev/null 2>&1 || true
+
+    if ! ensure_portable_pgvector; then
+        print_warning "Stobe database provisioning stopped before loading pgvector."
+        return 1
+    fi
 
     if ! pg_isready -d template1 -q; then
         printf ">> PostgreSQL is not running; starting it now...\n"
@@ -332,6 +357,11 @@ ensure_dialectic_database() {
     print_header "ENSURING DIALECTIC DATABASE"
     if [ ! -d "$server_root" ]; then
         print_warning "DialecticServer directory not found; skipping database provisioning."
+        return 1
+    fi
+
+    if ! ensure_portable_pgvector; then
+        print_warning "Dialectic database provisioning stopped before loading pgvector."
         return 1
     fi
 
