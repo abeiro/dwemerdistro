@@ -167,22 +167,59 @@ EOF
 }
 
 ensure_stobe_database() {
-    local schema_path="/var/www/html/StobeServer/data/schema.sql"
+    local server_root="/var/www/html/StobeServer"
+    local schema_path="$server_root/data/schema.sql"
     local db_exists=""
     local schema_ready=""
+    local bootstrap_output="/tmp/stobe_startup_database_bootstrap.out"
+    local bootstrap_log="$server_root/log/db_update_runner.log"
 
-    if [ ! -d /var/www/html/StobeServer ]; then
+    if [ ! -d "$server_root" ]; then
         echo "Skipping StobeServer DB bootstrap (StobeServer not installed)."
         return 0
     fi
 
+    mkdir -p "$server_root/log" >/dev/null 2>&1 || true
+
+    if ! pg_isready -d template1 -q; then
+        echo "PostgreSQL is not ready; starting it before StobeServer database setup..."
+        service postgresql start >"$bootstrap_output" 2>&1 || true
+        local postgres_ready=0
+        local attempt
+        for attempt in {1..15}; do
+            if pg_isready -d template1 -q; then
+                postgres_ready=1
+                break
+            fi
+            sleep 1
+        done
+        if [ "$postgres_ready" -ne 1 ]; then
+            cp "$bootstrap_output" "$bootstrap_log" 2>/dev/null || true
+            echo "WARNING: PostgreSQL did not start. See $bootstrap_log"
+            return 1
+        fi
+    fi
+
     export PGPASSWORD=dwemer
 
-    db_exists=$(psql -h localhost -U dwemer -tAc "SELECT 1 FROM pg_database WHERE datname = 'stobe' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+    : > "$bootstrap_output"
+    if ! db_exists=$(psql -h localhost -U dwemer -d dwemer -X -tAc "SELECT 1 FROM pg_database WHERE datname = 'stobe' LIMIT 1" 2>>"$bootstrap_output"); then
+        printf '\nApplication database catalog probe failed; trying the PostgreSQL service account.\n' >> "$bootstrap_output"
+        if ! db_exists=$(sudo -u postgres psql -d template1 -X -tAc "SELECT 1 FROM pg_database WHERE datname = 'stobe' LIMIT 1" 2>>"$bootstrap_output"); then
+            cp "$bootstrap_output" "$bootstrap_log" 2>/dev/null || true
+            echo "WARNING: Failed to inspect the Stobe database. See $bootstrap_log"
+            tail -n 8 "$bootstrap_output" | sed 's/^/  /'
+            unset PGPASSWORD
+            return 1
+        fi
+    fi
+    db_exists=$(printf '%s' "$db_exists" | tr -d '[:space:]')
     if [ "$db_exists" != "1" ]; then
         echo "Creating StobeServer database..."
-        if ! createdb -h localhost -U dwemer stobe >/dev/null 2>&1; then
-            echo "WARNING: Failed to create stobe database."
+        if ! sudo -u postgres createdb --maintenance-db=template1 --owner=dwemer --encoding=UTF8 --locale=C --template=template0 stobe >"$bootstrap_output" 2>&1; then
+            cp "$bootstrap_output" "$bootstrap_log" 2>/dev/null || true
+            echo "WARNING: Failed to create stobe database. See $bootstrap_log"
+            tail -n 8 "$bootstrap_output" | sed 's/^/  /'
             unset PGPASSWORD
             return 1
         fi
@@ -194,33 +231,49 @@ ensure_stobe_database() {
         return 1
     fi
 
-    schema_ready=$(psql -h localhost -U dwemer -d stobe -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='general_settings' LIMIT 1" 2>/dev/null | tr -d '[:space:]')
+    : > "$bootstrap_output"
+    if ! sudo -u postgres psql -d stobe -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector; ALTER DATABASE stobe OWNER TO dwemer;" >"$bootstrap_output" 2>&1; then
+        cp "$bootstrap_output" "$bootstrap_log" 2>/dev/null || true
+        echo "WARNING: Failed to provision Stobe PostgreSQL extensions. See $bootstrap_log"
+        tail -n 8 "$bootstrap_output" | sed 's/^/  /'
+        unset PGPASSWORD
+        return 1
+    fi
+
+    : > "$bootstrap_output"
+    if ! schema_ready=$(psql -h localhost -U dwemer -d stobe -X -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='general_settings' LIMIT 1" 2>>"$bootstrap_output"); then
+        cp "$bootstrap_output" "$bootstrap_log" 2>/dev/null || true
+        echo "WARNING: Failed to inspect the Stobe database schema. See $bootstrap_log"
+        tail -n 8 "$bootstrap_output" | sed 's/^/  /'
+        unset PGPASSWORD
+        return 1
+    fi
+    schema_ready=$(printf '%s' "$schema_ready" | tr -d '[:space:]')
     if [ "$schema_ready" != "1" ]; then
         echo "Applying StobeServer schema..."
-        if ! psql -h localhost -U dwemer -d stobe -f "$schema_path" >/dev/null 2>&1; then
-            echo "WARNING: Failed to apply StobeServer schema."
+        if ! psql -h localhost -U dwemer -d stobe -v ON_ERROR_STOP=1 -f "$schema_path" >"$bootstrap_output" 2>&1; then
+            cp "$bootstrap_output" "$bootstrap_log" 2>/dev/null || true
+            echo "WARNING: Failed to apply StobeServer schema. See $bootstrap_log"
+            tail -n 8 "$bootstrap_output" | sed 's/^/  /'
             unset PGPASSWORD
             return 1
         fi
     fi
 
     if [ -f /var/www/html/StobeServer/debug/run_db_updates.php ]; then
-        local stobe_db_update_log="/var/www/html/StobeServer/log/db_update_runner.log"
-        local stobe_db_update_tmp="/tmp/stobe_db_update_runner.out"
-        if ! php /var/www/html/StobeServer/debug/run_db_updates.php >"$stobe_db_update_tmp" 2>&1; then
-            mkdir -p /var/www/html/StobeServer/log >/dev/null 2>&1 || true
+        if ! php /var/www/html/StobeServer/debug/run_db_updates.php >"$bootstrap_output" 2>&1; then
             {
                 printf "\n[%s] start_env: run_db_updates.php failed\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-                cat "$stobe_db_update_tmp"
-            } >> "$stobe_db_update_log"
-            echo "WARNING: StobeServer DB update trigger failed. See $stobe_db_update_log"
-            rm -f "$stobe_db_update_tmp"
+                cat "$bootstrap_output"
+            } >> "$bootstrap_log"
+            echo "WARNING: StobeServer DB update trigger failed. See $bootstrap_log"
+            rm -f "$bootstrap_output"
             unset PGPASSWORD
             return 1
         fi
-        rm -f "$stobe_db_update_tmp"
     fi
 
+    rm -f "$bootstrap_output"
     echo "StobeServer database ready."
     unset PGPASSWORD
     return 0

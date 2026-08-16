@@ -5,6 +5,7 @@ set -u
 MODE="check"
 WEB_ROOT="/var/www/html"
 HERIKA_ROOT="$WEB_ROOT/HerikaServer"
+STOBE_ROOT="$WEB_ROOT/StobeServer"
 DIALECTIC_ROOT="$WEB_ROOT/DialecticServer"
 APP_USER="dwemer"
 WEB_USER="www-data"
@@ -25,6 +26,9 @@ POSTGRES_PORT=5432
 HERIKA_DATABASE="dwemer"
 HERIKA_DB_USER="dwemer"
 HERIKA_DB_PASSWORD="dwemer"
+STOBE_DATABASE="stobe"
+STOBE_DB_USER="dwemer"
+STOBE_DB_PASSWORD="dwemer"
 DOCTOR_BACKUP_ROOT="/home/dwemer/DwemerDistro-Backups/Doctor"
 DOCTOR_MANAGE_SERVICES=1
 HERIKA_CLONE_SQL_PATH=""
@@ -981,6 +985,25 @@ check_dialectic() {
     fi
 }
 
+check_stobe() {
+    info "Checking StobeServer"
+
+    if [ ! -d "$STOBE_ROOT" ]; then
+        warn "$STOBE_ROOT is not installed"
+        return
+    fi
+
+    if have_cmd psql; then
+        export PGPASSWORD="$STOBE_DB_PASSWORD"
+        if psql -X -h 127.0.0.1 -p "$POSTGRES_PORT" -U "$STOBE_DB_USER" -d "$STOBE_DATABASE" -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='general_settings'" 2>/dev/null | grep -q 1; then
+            ok "Stobe database and core schema are available"
+        else
+            fail "Stobe database or core schema is unavailable"
+        fi
+        unset PGPASSWORD
+    fi
+}
+
 tail_known_log() {
     local path="$1"
     local lines="${2:-20}"
@@ -1081,6 +1104,9 @@ check_recent_logs() {
     scan_log_for_patterns "$HERIKA_ROOT/log/service.log" "Herika service.log"
     scan_log_for_patterns "$HERIKA_ROOT/log/manager.log" "Herika manager.log"
     scan_log_for_patterns "$HERIKA_ROOT/log/relationship_worker.log" "Relationship worker"
+    if [ -f "$STOBE_ROOT/log/db_update_runner.log" ]; then
+        scan_log_for_patterns "$STOBE_ROOT/log/db_update_runner.log" "Stobe database bootstrap"
+    fi
     scan_log_for_patterns "$DIALECTIC_ROOT/log/dialectic.log" "Dialectic dialectic.log"
     scan_log_for_patterns "$DIALECTIC_ROOT/log/service.log" "Dialectic service.log"
     scan_log_for_patterns "$DIALECTIC_ROOT/log/manager.log" "Dialectic manager.log"
@@ -1099,6 +1125,7 @@ check_apache
 check_postgres
 check_herika_database
 check_background_service
+check_stobe
 check_dialectic
 check_ports
 check_recent_logs
