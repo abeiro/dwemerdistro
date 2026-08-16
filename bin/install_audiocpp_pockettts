@@ -88,7 +88,8 @@ write_runtime_files() {
         "language": "english"
       },
       "session_options": {
-        "language": "english"
+        "language": "english",
+        "pocket_tts.voice_state_cache_slots": 16
       }
     }
   ]
