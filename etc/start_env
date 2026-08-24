@@ -7,6 +7,15 @@ if [ -f "/home/dwemer/.cuda_config" ]; then
     source /home/dwemer/.cuda_config
 fi
 
+# Snapshot the dashboard preference for this startup. Only an explicit 0 disables the legacy behavior.
+DASHBOARD_AUTOOPEN=1
+if [ -r "/home/dwemer/.dashboard_autoopen" ]; then
+	dashboard_autoopen_value=$(head -n 1 /home/dwemer/.dashboard_autoopen 2>/dev/null | tr -d '[:space:]')
+	if [ "$dashboard_autoopen_value" = "0" ]; then
+		DASHBOARD_AUTOOPEN=0
+	fi
+fi
+
 if [ -f "/etc/dwemerdistro_services.conf" ]; then
     # shellcheck disable=SC1091
     source /etc/dwemerdistro_services.conf
@@ -798,7 +807,12 @@ if [ -z "$L_MCPSERVER" ]; then
 	echo CHIM MCP Server: http://$ipaddress:3100
 fi
 
-explorer.exe http://$ipaddress:8081/Dwemer-Dashboard/index.php &>/dev/null&
+if [ "$DASHBOARD_AUTOOPEN" = "0" ]; then
+	echo "Skipping Dwemer Dashboard browser launch (disabled in launcher Settings)."
+else
+	echo "Opening Dwemer Dashboard in the default browser."
+	explorer.exe http://$ipaddress:8081/Dwemer-Dashboard/index.php &>/dev/null&
+fi
 
 echo "Press Enter to shutdown DwemerDistro"
 read
