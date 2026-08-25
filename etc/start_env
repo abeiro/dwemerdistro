@@ -195,6 +195,40 @@ ensure_portable_pgvector() {
     return 0
 }
 
+# Run HerikaServer migrations during service startup so browser loading is not a prerequisite.
+ensure_herika_database_updates() {
+    local server_root="/var/www/html/HerikaServer"
+    local update_runner="$server_root/debug/apply_db_updates.php"
+    local update_output="/tmp/herika_startup_database_updates.out"
+    local update_log="$server_root/log/db_update_runner.log"
+
+    if [ ! -d "$server_root" ]; then
+        echo "Skipping HerikaServer DB updates (HerikaServer not installed)."
+        return 0
+    fi
+
+    mkdir -p "$server_root/log" >/dev/null 2>&1 || true
+
+    if [ ! -f "$update_runner" ]; then
+        echo "WARNING: HerikaServer DB update runner is missing at $update_runner"
+        return 1
+    fi
+
+    if ! php "$update_runner" >"$update_output" 2>&1; then
+        {
+            printf "\n[%s] start_env: apply_db_updates.php failed\n" "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            cat "$update_output"
+        } >> "$update_log"
+        echo "WARNING: HerikaServer DB update trigger failed. See $update_log"
+        rm -f "$update_output"
+        return 1
+    fi
+
+    rm -f "$update_output"
+    echo "HerikaServer database updates complete."
+    return 0
+}
+
 ensure_stobe_database() {
     local server_root="/var/www/html/StobeServer"
     local schema_path="$server_root/data/schema.sql"
@@ -540,6 +574,10 @@ ensure_herika_log_permissions
 echo "Starting Apache/PHP/PGSQL Server"
 /etc/init.d/apache2 restart &>/dev/null
 /etc/init.d/postgresql restart
+
+if ! ensure_herika_database_updates; then
+    echo "WARNING: HerikaServer may not be fully updated."
+fi
 
 if ! ensure_stobe_database; then
     echo "WARNING: StobeServer may not be fully initialized."
