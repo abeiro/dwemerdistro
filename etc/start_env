@@ -571,14 +571,18 @@ if [ ! -x "$SERVER_MANAGER" ]; then
     SERVER_MANAGER="/home/dwemer/dwemerdistro/bin/ddistro_server"
 fi
 
-SERVER_STARTUP_READY=1
+DIALECTIC_DATABASE_READY=0
 if [ -x "$SERVER_MANAGER" ]; then
-    if ! "$SERVER_MANAGER" startup; then
-        SERVER_STARTUP_READY=0
-        echo "WARNING: One or more installed application servers need attention."
-    fi
+    for managed_product in herika stobe dialectic; do
+        if "$SERVER_MANAGER" startup "$managed_product"; then
+            if [ "$managed_product" = "dialectic" ]; then
+                DIALECTIC_DATABASE_READY=1
+            fi
+        else
+            echo "WARNING: $managed_product needs attention; continuing with the remaining application servers."
+        fi
+    done
 else
-    SERVER_STARTUP_READY=0
     echo "WARNING: Optional-server manager is unavailable. Run Update Mods before starting application servers."
 fi
 
@@ -587,7 +591,7 @@ echo "Starting Apache/PHP/PGSQL Server"
 /etc/init.d/apache2 restart &>/dev/null
 /etc/init.d/postgresql restart
 
-if [ "$SERVER_STARTUP_READY" -eq 1 ] && [ -d "/var/www/html/DialecticServer" ]; then
+if [ "$DIALECTIC_DATABASE_READY" -eq 1 ] && [ -d "/var/www/html/DialecticServer" ]; then
     ensure_dialectic_runtime
 elif [ -d "/var/www/html/DialecticServer" ]; then
     echo "WARNING: DialecticServer background runtime was not started because its database is not ready."

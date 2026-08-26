@@ -36,7 +36,7 @@ Commands:
   update <herika|stobe|dialectic> [--branch main|dev]
   repair <herika|stobe|dialectic> [--branch main|dev]
   uninstall <herika|stobe|dialectic> --confirm PURGE-<PRODUCT>
-  startup
+  startup [herika|stobe|dialectic]
 
 Install is allowed only when both the canonical server root and application
 database are absent. Repair handles legacy and partial installations. Update
@@ -870,29 +870,43 @@ uninstall_product() {
     ok "$PRODUCT uninstalled."
 }
 
-startup_installed_products() {
-    local key
+startup_product() {
+    local key="$1"
     local state
 
+    select_product "$key"
+    state="$(repository_state)"
+    if [ "$state" = "absent" ]; then
+        if [ "$(database_state)" = "present" ]; then
+            info "$key has an orphaned database and needs repair; startup skipped."
+        else
+            info "$key is not installed; startup skipped."
+        fi
+        remove_vhost
+        return 0
+    fi
+    if [ "$state" = "legacy" ]; then
+        info "$key uses a legacy deployment; database startup will continue without Git adoption."
+    fi
+    bootstrap_database
+    write_vhost
+    apply_permissions
+}
+
+startup_installed_products() {
+    local key
+    local failed=0
+
+    # Keep products independent: a broken migration in one server must not prevent healthy
+    # installed servers from preparing their databases, vhosts, and runtime permissions.
     for key in herika stobe dialectic; do
-        select_product "$key"
-        state="$(repository_state)"
-        if [ "$state" = "absent" ]; then
-            if [ "$(database_state)" = "present" ]; then
-                info "$key has an orphaned database and needs repair; startup skipped."
-            else
-                info "$key is not installed; startup skipped."
-            fi
-            remove_vhost
-            continue
+        if ! (startup_product "$key"); then
+            info "$key startup preparation failed; continuing with the remaining products."
+            failed=1
         fi
-        if [ "$state" = "legacy" ]; then
-            info "$key uses a legacy deployment; database startup will continue without Git adoption."
-        fi
-        bootstrap_database
-        write_vhost
-        apply_permissions
     done
+
+    return "$failed"
 }
 
 case "$POSTGRES_PORT" in
@@ -972,10 +986,19 @@ case "$COMMAND" in
         uninstall_product "$CONFIRMATION"
         ;;
     startup)
-        require_root startup
+        REQUESTED="${1:-all}"
+        [ "$#" -le 1 ] || fail "startup accepts at most one product." 64
+        if [ "$REQUESTED" != "all" ]; then
+            select_product "$REQUESTED"
+        fi
+        require_root startup "$REQUESTED"
         acquire_operation_lock
         start_postgres
-        startup_installed_products
+        if [ "$REQUESTED" = "all" ]; then
+            startup_installed_products
+        else
+            startup_product "$REQUESTED"
+        fi
         ;;
     -h|--help|help)
         usage
