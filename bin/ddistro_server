@@ -601,6 +601,8 @@ apply_permissions() {
 }
 
 record_install() {
+    local update_include_path="/home/dwemer/.update_include_$PRODUCT"
+
     mkdir -p "$STATE_ROOT"
     cat > "$STATE_ROOT/$PRODUCT.state" <<EOF
 schema_version=1
@@ -615,7 +617,10 @@ EOF
         printf 'backup=%s\n' "$PRODUCT_BACKUP" >> "$STATE_ROOT/$PRODUCT.state"
     fi
     chmod 600 "$STATE_ROOT/$PRODUCT.state"
-    printf '1\n' > "/home/dwemer/.update_include_$PRODUCT"
+    # Installation defaults to included, but repair/update must preserve the user's saved choice.
+    if [ ! -e "$update_include_path" ]; then
+        printf '1\n' > "$update_include_path"
+    fi
 }
 
 safe_remove_temp() {
