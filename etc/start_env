@@ -566,39 +566,35 @@ ensure_herika_log_permissions() {
     done
 }
 
-ensure_stobe_apache_vhost
-ensure_dialectic_apache_vhost
-ensure_herika_log_permissions
+SERVER_MANAGER="/usr/local/bin/ddistro_server"
+if [ ! -x "$SERVER_MANAGER" ]; then
+    SERVER_MANAGER="/home/dwemer/dwemerdistro/bin/ddistro_server"
+fi
+
+SERVER_STARTUP_READY=1
+if [ -x "$SERVER_MANAGER" ]; then
+    if ! "$SERVER_MANAGER" startup; then
+        SERVER_STARTUP_READY=0
+        echo "WARNING: One or more installed application servers need attention."
+    fi
+else
+    SERVER_STARTUP_READY=0
+    echo "WARNING: Optional-server manager is unavailable. Run Update Mods before starting application servers."
+fi
 
 # Start Apache/PHP server
 echo "Starting Apache/PHP/PGSQL Server"
 /etc/init.d/apache2 restart &>/dev/null
 /etc/init.d/postgresql restart
 
-if ! ensure_herika_database_updates; then
-    echo "WARNING: HerikaServer may not be fully updated."
-fi
-
-if ! ensure_stobe_database; then
-    echo "WARNING: StobeServer may not be fully initialized."
-fi
-
-ensure_dialectic_runtime_permissions || true
-
-DIALECTIC_DATABASE_READY=1
-if ! ensure_dialectic_database; then
-    DIALECTIC_DATABASE_READY=0
-    echo "WARNING: DialecticServer may not be fully initialized."
-fi
-
-if [ "$DIALECTIC_DATABASE_READY" -eq 1 ]; then
+if [ "$SERVER_STARTUP_READY" -eq 1 ] && [ -d "/var/www/html/DialecticServer" ]; then
     ensure_dialectic_runtime
-else
+elif [ -d "/var/www/html/DialecticServer" ]; then
     echo "WARNING: DialecticServer background runtime was not started because its database is not ready."
 fi
 
 # Create symbolic link for Apache error log if it doesn't exist
-if [ ! -e "/var/www/html/HerikaServer/log/apache_error.log" ]; then
+if [ -d "/var/www/html/HerikaServer" ] && [ ! -e "/var/www/html/HerikaServer/log/apache_error.log" ]; then
   mkdir -p /var/www/html/HerikaServer/log/
   ln -sf /var/log/apache2/error.log /var/www/html/HerikaServer/log/apache_error.log
 fi
@@ -753,15 +749,16 @@ else
 	L_MCPSERVER=1
 fi
 
-# Save IPs to PostgreSQL database after all services are started
+# Save IPs to the Herika database only when CHIM is installed. These values are
+# product configuration, not a dependency of the server-free distro core.
 export PGPASSWORD=dwemer
 
-# Wait for PostgreSQL to be fully ready
-sleep 2
-
-# Check if database connection works and create/update IP records
-psql_result=$(psql -h localhost -U dwemer -d dwemer -t -c "SELECT 1;" 2>/dev/null | tr -d ' \n')
-if [ "$psql_result" = "1" ]; then
+# Check if the Herika database connection works and create/update IP records.
+if [ -d "/var/www/html/HerikaServer" ]; then
+  # Wait for PostgreSQL to be fully ready before writing CHIM network settings.
+  sleep 2
+  psql_result=$(psql -h localhost -U dwemer -d dwemer -t -c "SELECT 1;" 2>/dev/null | tr -d ' \n')
+  if [ "$psql_result" = "1" ]; then
     # Create conf_opts table if it doesn't exist
     psql -h localhost -U dwemer -d dwemer -c "
     CREATE TABLE IF NOT EXISTS conf_opts (
@@ -783,7 +780,8 @@ if [ "$psql_result" = "1" ]; then
     ON CONFLICT (id) 
     DO UPDATE SET value = EXCLUDED.value;" &>/dev/null
     
-    echo "Network IPs saved to database successfully."
+      echo "Network IPs saved to HerikaServer database successfully."
+  fi
 fi
 
 unset PGPASSWORD
@@ -794,12 +792,20 @@ cat << EOF
 AIAgent.ini Network Settings:
 Windows Host IP: $host_ip 
 WSL2 Internal IP: $wsl_ip 
-HerikaServer: http://$ipaddress:8081/HerikaServer
-StobeServer: http://$ipaddress:8083/StobeServer
-DialecticServer: http://$ipaddress:8088/DialecticServer
-
-Running Components:
 EOF
+
+if [ -d "/var/www/html/HerikaServer" ]; then
+    echo "HerikaServer: http://$ipaddress:8081/HerikaServer"
+fi
+if [ -d "/var/www/html/StobeServer" ]; then
+    echo "StobeServer: http://$ipaddress:8083/StobeServer"
+fi
+if [ -d "/var/www/html/DialecticServer" ]; then
+    echo "DialecticServer: http://$ipaddress:8088/DialecticServer"
+fi
+
+echo
+echo "Running Components:"
 
 if [ -z "$L_MINIME" ]; then
 	echo Minime-T5/TXT2VEC API: http://$ipaddress:8082
