@@ -402,6 +402,11 @@ run_php_updates() {
             ) AND to_regclass('public.eventlog_view') IS NOT NULL THEN 1 ELSE 0 END" \
             2>/dev/null | tr -d '[:space:]')"
 
+        if [ "$herika_payload_ready" != "1" ]; then
+            rm -f "$update_log"
+            fail "$label eventlog session migration is incomplete."
+        fi
+
         unexpected_errors="$(printf '%s\n' "$unexpected_errors" \
             | grep -Fv 'ALTER TABLE public.eventlog ALTER COLUMN sess TYPE text ERROR:' \
             | grep -Fv 'Failed to apply patch eventlog_session_payload 20260807001' || true)"
