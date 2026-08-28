@@ -849,6 +849,55 @@ drop_product_database() {
     sudo -u postgres dropdb -p "$POSTGRES_PORT" --if-exists "$PRODUCT_DATABASE" || fail "Could not drop database $PRODUCT_DATABASE."
 }
 
+# The migration helper writes only to the default cluster and this fixed backup
+# directory. Check it before uninstall mutates anything, then recheck on removal.
+purge_dialectic_migration_backups() {
+    [ "$PRODUCT" = "dialectic" ] || return 0
+    [ "$POSTGRES_PORT" = "5432" ] || return 0
+
+    local backup_dir="/var/backups/dialectic"
+    local databases candidate name
+
+    [ ! -L "$backup_dir" ] || fail "Refusing redirected Dialectic migration backup directory."
+    if [ -e "$backup_dir" ]; then
+        [ -d "$backup_dir" ] && [ "$(readlink -e -- "$backup_dir")" = "$backup_dir" ] \
+            || fail "Refusing an unexpected Dialectic migration backup path."
+    fi
+
+    start_postgres
+    databases="$(sudo -u postgres psql -p "$POSTGRES_PORT" -d template1 -X -At -v ON_ERROR_STOP=1 -c \
+        "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
+         WHERE d.datname ~ '^dialectic_sql_ascii_[0-9]{14}$'
+           AND r.rolname = '$DATABASE_ROLE' AND NOT d.datistemplate
+           AND pg_encoding_to_char(d.encoding) = 'SQL_ASCII' AND NOT d.datallowconn
+           AND EXISTS (SELECT 1 FROM pg_db_role_setting s
+                       WHERE s.setdatabase = d.oid AND s.setrole = 0
+                         AND 'default_transaction_read_only=on' = ANY(s.setconfig))
+         ORDER BY d.datname;")" || fail "Could not inspect Dialectic migration recovery databases."
+
+    [ "${1:-}" != "--check" ] || return 0
+
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        [[ "$candidate" =~ ^dialectic_sql_ascii_[0-9]{14}$ ]] \
+            || fail "Refusing an unexpected Dialectic migration database name."
+        sudo -u postgres dropdb -p "$POSTGRES_PORT" --maintenance-db=template1 --if-exists "$candidate" \
+            || fail "Could not remove Dialectic migration recovery database $candidate."
+    done <<< "$databases"
+
+    [ -d "$backup_dir" ] || return 0
+    for candidate in "$backup_dir"/dialectic-*-sql-ascii.dump; do
+        name="${candidate##*/}"
+        [[ "$name" =~ ^dialectic-[0-9]{14}-sql-ascii\.dump$ ]] || continue
+        # The helper creates regular postgres-owned dumps. Never follow links or
+        # remove unrelated files/directories merely because their names match.
+        [ ! -L "$candidate" ] && [ -f "$candidate" ] || continue
+        [ "$(readlink -e -- "$candidate")" = "$candidate" ] \
+            && [ "$(stat -c '%U' -- "$candidate")" = "postgres" ] || continue
+        rm -f -- "$candidate" || fail "Could not remove Dialectic migration recovery dump $name."
+    done
+}
+
 remove_managed_backups() {
     local candidate
     while IFS= read -r candidate; do
@@ -878,11 +927,13 @@ uninstall_product() {
     expected="PURGE-$(printf '%s' "$PRODUCT" | tr '[:lower:]' '[:upper:]')"
     [ "$confirmation" = "$expected" ] || fail "Uninstall confirmation did not match $expected." 64
 
+    purge_dialectic_migration_backups --check
     stop_product_processes
     remove_vhost
     drop_product_database
     safe_remove_product_root
     remove_managed_backups
+    purge_dialectic_migration_backups
     rm -f "$STATE_ROOT/$PRODUCT.state"
     printf '1\n' > "/home/dwemer/.update_include_$PRODUCT"
 
