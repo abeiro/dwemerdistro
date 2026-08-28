@@ -1,0 +1,30 @@
+#!/bin/bash
+# Only prepared distribution images carry this marker; existing installs are untouched.
+set -euo pipefail
+marker=/var/lib/dwemerdistro/fresh-image
+test -f "$marker" || exit 0
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo -n /usr/local/bin/initialize_fresh_distro
+fi
+
+exec 9>/run/dwemerdistro-identity.lock
+flock 9
+test -f "$marker" || exit 0
+
+if [ ! -s /etc/machine-id ]; then
+    machine_id="$(dbus-uuidgen)"
+    [[ "$machine_id" =~ ^[0-9a-f]{32}$ ]] || exit 1
+    printf '%s\n' "$machine_id" > /etc/machine-id
+fi
+grep -Eq '^[0-9a-f]{32}$' /etc/machine-id
+chmod 444 /etc/machine-id
+install -d /var/lib/dbus
+ln -sfn /etc/machine-id /var/lib/dbus/machine-id
+
+# -A creates missing host keys only, so retries never replace a completed key.
+ssh-keygen -A
+for algorithm in rsa ecdsa ed25519; do
+    test -s "/etc/ssh/ssh_host_${algorithm}_key"
+    ssh-keygen -y -f "/etc/ssh/ssh_host_${algorithm}_key" >/dev/null
+done
+rm -- "$marker"

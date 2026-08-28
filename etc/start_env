@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Also covers imported images on WSL versions without boot.command support.
+/usr/local/bin/initialize_fresh_distro || exit 1
+
 /usr/local/bin/print_logo
 
 # Load CUDA configuration if it exists (will not be overwritten by updates)
