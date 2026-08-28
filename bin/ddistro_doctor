@@ -633,6 +633,11 @@ check_herika_database() {
     local clone_sql_path="${HERIKA_CLONE_SQL_PATH:-$HERIKA_ROOT/lib/schema_clone_function.sql}"
     local db_update_runner="${HERIKA_DB_UPDATE_RUNNER:-$HERIKA_ROOT/debug/apply_db_updates.php}"
 
+    if [ ! -d "$HERIKA_ROOT" ]; then
+        ok "HerikaServer is not installed (optional)"
+        return
+    fi
+
     if ! have_cmd psql; then
         warn "psql unavailable; cannot check the Herika database schema"
         return
@@ -871,7 +876,7 @@ check_background_service() {
     info "Checking Herika background processor / Background Life"
 
     if [ ! -d "$HERIKA_ROOT" ]; then
-        warn "$HERIKA_ROOT is not installed"
+        ok "HerikaServer is not installed (optional)"
         return
     fi
 
@@ -942,7 +947,7 @@ check_dialectic() {
     info "Checking DialecticServer"
 
     if [ ! -d "$DIALECTIC_ROOT" ]; then
-        warn "$DIALECTIC_ROOT is not installed"
+        ok "DialecticServer is not installed (optional)"
         return
     fi
 
@@ -989,7 +994,7 @@ check_stobe() {
     info "Checking StobeServer"
 
     if [ ! -d "$STOBE_ROOT" ]; then
-        warn "$STOBE_ROOT is not installed"
+        ok "StobeServer is not installed (optional)"
         return
     fi
 
@@ -1018,8 +1023,12 @@ tail_known_log() {
 
 check_ports() {
     info "Checking common service ports"
-    check_port_report "Herika/Dwemer web UI" "$HERIKA_UI_PORT" warn
-    check_port_report "Dialectic web UI" "$DIALECTIC_UI_PORT" warn
+    if [ -d "$HERIKA_ROOT" ]; then
+        check_port_report "Herika/Dwemer web UI" "$HERIKA_UI_PORT" warn
+    fi
+    if [ -d "$DIALECTIC_ROOT" ]; then
+        check_port_report "Dialectic web UI" "$DIALECTIC_UI_PORT" warn
+    fi
 
     if [ -e /home/dwemer/xtts-api-server/start.sh ]; then
         check_local_tts_service "XTTS FastAPI" xtts "$XTTS_PORT" "$XTTS_PORT"

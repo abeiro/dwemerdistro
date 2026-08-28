@@ -514,91 +514,80 @@ printf "\n${BOLD}=======================================================${NC}\n"
 printf "${BOLD}          DWEMER DYNAMICS SYSTEM UPDATE                ${NC}\n"
 printf "${BOLD}=======================================================${NC}\n\n"
 
-# Server update
-if [ "$UPDATE_HERIKA" -eq 1 ]; then
-    cd /var/www/html/HerikaServer
-    BRANCH=$(git branch --show-current)
-    print_header "UPDATING HERIKA SERVER" "$BRANCH"
-
-    printf ">> Resetting repository...\n"
-    git reset --hard HEAD
-    printf ">> Pulling latest changes...\n"
-    git pull
-    # Set permissions for HerikaServer immediately after updating
-    echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/HerikaServer
-    echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/HerikaServer
-    printf "${GREEN}[SUCCESS] HerikaServer updated successfully${NC}\n"
-else
-    print_warning "Skipping HerikaServer update by request"
+# Server updates are install-state aware. Missing products are never installed by
+# the general updater; users install them explicitly from the launcher.
+SERVER_MANAGER="/usr/local/bin/ddistro_server"
+if [ ! -x "$SERVER_MANAGER" ]; then
+    SERVER_MANAGER="/home/dwemer/dwemerdistro/bin/ddistro_server"
 fi
 
-if [ "$UPDATE_STOBE" -eq 1 ]; then
-    STOBE_INITIAL_INSTALL=0
-    if ensure_stobe_repo_exists "stobe"; then
-        cd /var/www/html/StobeServer || {
-            print_warning "Could not access /var/www/html/StobeServer after setup."
-            STOBE_SETUP_FAILED=1
-        }
+update_installed_server() {
+    local product="$1"
+    local include="$2"
+    local root="$3"
+    local branch_choice="main"
+    local current_branch=""
+    local status_json=""
 
-        if [ "${STOBE_SETUP_FAILED:-0}" -ne 1 ]; then
-            if [ "$STOBE_INITIAL_INSTALL" -eq 0 ]; then
-                BRANCH=$(git branch --show-current)
-                print_header "UPDATING STOBE SERVER" "$BRANCH"
-                printf ">> Resetting repository...\n"
-                git reset --hard HEAD
-                printf ">> Pulling latest changes...\n"
-                git pull
-            fi
-
-            if [ "$STOBE_INITIAL_INSTALL" -eq 1 ]; then
-                printf ">> Clearing seeded Stobe logs for initial install...\n"
-                clear_stobe_initial_logs || print_warning "StobeServer initial install log reset was incomplete."
-            fi
-
-            # Set permissions for StobeServer
-            echo $PASSWORD | sudo -S chown -R dwemer:www-data /var/www/html/StobeServer
-            echo $PASSWORD | sudo -S chmod -R 775 /var/www/html/StobeServer
-            if ensure_stobe_database; then
-                printf "${GREEN}[SUCCESS] StobeServer updated successfully${NC}\n"
-            else
-                print_warning "StobeServer updated, but DB provisioning was incomplete."
-            fi
-        else
-            print_warning "StobeServer setup failed; skipping remaining StobeServer update steps."
-        fi
-    else
-        print_warning "StobeServer repository setup failed; skipping StobeServer update."
+    if [ "$include" -ne 1 ]; then
+        print_warning "Skipping $product update by request"
+        return 0
     fi
-else
-    print_warning "Skipping StobeServer update by request"
-fi
-
-if [ "$UPDATE_DIALECTIC" -eq 1 ]; then
-    DIALECTIC_INITIAL_INSTALL=0
-    if ensure_dialectic_repo_exists "dev"; then
-        cd /var/www/html/DialecticServer || true
-        if [ "$DIALECTIC_INITIAL_INSTALL" -eq 0 ]; then
-            BRANCH=$(git branch --show-current)
-            print_header "UPDATING DIALECTIC SERVER" "$BRANCH"
-            printf ">> Resetting repository...\n"
-            git reset --hard HEAD
-            printf ">> Pulling latest changes...\n"
-            git pull --ff-only
-        fi
-
-        ensure_dialectic_runtime_permissions || true
-        if ensure_dialectic_database; then
-            print_success "DialecticServer updated successfully"
-        else
-            DIALECTIC_UPDATE_FAILED=1
-            print_warning "DialecticServer updated, but database provisioning was incomplete."
-        fi
-    else
-        DIALECTIC_UPDATE_FAILED=1
-        print_warning "DialecticServer repository setup failed; skipping DialecticServer update."
+    if [ ! -x "$SERVER_MANAGER" ]; then
+        print_warning "Server manager is unavailable; skipping $product update."
+        return 1
     fi
-else
-    print_warning "Skipping DialecticServer update by request"
+
+    if ! status_json=$("$SERVER_MANAGER" status "$product" --json); then
+        print_warning "Could not inspect $product; update skipped."
+        return 1
+    fi
+    current_branch=$(git -c safe.directory="$root" -C "$root" branch --show-current 2>/dev/null || true)
+    case "$current_branch" in
+        dev|unstable) branch_choice="dev" ;;
+    esac
+
+    if printf '%s' "$status_json" | grep -q '"state":"needs-repair"' \
+        && printf '%s' "$status_json" | grep -q '"repository_state":"legacy"'; then
+        print_warning "$product uses a legacy deployment; adopting it with a retained backup before updating."
+        if echo "$PASSWORD" | sudo -S "$SERVER_MANAGER" repair "$product" --branch "$branch_choice"; then
+            print_success "$product legacy deployment adopted and updated successfully"
+            return 0
+        fi
+        print_warning "$product legacy deployment could not be adopted."
+        return 1
+    fi
+    # Older launchers clone selected servers before update_gws creates their databases.
+    # Finish those installations without installing a product whose files are absent.
+    if printf '%s' "$status_json" | grep -q '"state":"needs-repair"' \
+        && printf '%s' "$status_json" | grep -q '"repository_state":"managed"'; then
+        if echo "$PASSWORD" | sudo -S "$SERVER_MANAGER" repair "$product" --branch "$branch_choice"; then
+            print_success "$product updated successfully"
+            return 0
+        fi
+        print_warning "$product update failed."
+        return 1
+    fi
+    if ! printf '%s' "$status_json" | grep -q '"state":"installed"'; then
+        print_warning "$product is not installed; update skipped."
+        return 0
+    fi
+
+    print_header "UPDATING ${product^^} SERVER" "$current_branch"
+    # Legacy launchers run this script as dwemer without a visible sudo prompt.
+    if echo "$PASSWORD" | sudo -S "$SERVER_MANAGER" update "$product" --branch "$branch_choice"; then
+        print_success "$product updated successfully"
+        return 0
+    fi
+
+    print_warning "$product update failed."
+    return 1
+}
+
+update_installed_server herika "$UPDATE_HERIKA" /var/www/html/HerikaServer || COMPONENT_UPDATE_FAILED=1
+update_installed_server stobe "$UPDATE_STOBE" /var/www/html/StobeServer || COMPONENT_UPDATE_FAILED=1
+if ! update_installed_server dialectic "$UPDATE_DIALECTIC" /var/www/html/DialecticServer; then
+    DIALECTIC_UPDATE_FAILED=1
 fi
 
 # Dwemer Dashboard update/install

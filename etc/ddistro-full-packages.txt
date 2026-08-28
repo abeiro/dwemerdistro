@@ -762,6 +762,7 @@ mount
 mycroft-mimic3-tts
 mysql-common
 nano
+netcat-openbsd
 ncurses-base
 ncurses-bin
 net-tools

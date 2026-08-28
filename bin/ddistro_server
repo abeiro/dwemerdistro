@@ -1,0 +1,1083 @@
+#!/usr/bin/env bash
+
+set -u
+
+WEB_ROOT="/var/www/html"
+STATE_ROOT="/var/lib/dwemerdistro/servers"
+LOCK_PATH="/run/lock/dwemerdistro-server-manager.d"
+APP_USER="dwemer"
+WEB_GROUP="www-data"
+DATABASE_ROLE="dwemer"
+POSTGRES_PORT="${DDISTRO_POSTGRES_PORT:-5432}"
+JSON_OUTPUT=0
+PRODUCT=""
+PRODUCT_ROOT=""
+PRODUCT_DATABASE=""
+PRODUCT_REPOSITORY=""
+PRODUCT_PRODUCTION_BRANCH=""
+PRODUCT_DEV_BRANCH="dev"
+PRODUCT_VHOST=""
+PRODUCT_PORT=""
+PRODUCT_BACKUP=""
+INSTALL_CLEANUP_ACTIVE=0
+INSTALL_DATABASE_CREATED=0
+INSTALL_ROOT_CREATED=0
+LOCK_HELD=0
+
+usage() {
+    cat <<'EOF'
+Usage: ddistro_server <command> [product] [options]
+
+Manage optional DwemerDistro application servers.
+
+Commands:
+  status [all|herika|stobe|dialectic] [--json]
+  install <herika|stobe|dialectic> [--branch main|dev]
+  update <herika|stobe|dialectic> [--branch main|dev]
+  repair <herika|stobe|dialectic> [--branch main|dev]
+  uninstall <herika|stobe|dialectic> --confirm PURGE-<PRODUCT>
+  startup [herika|stobe|dialectic]
+
+Install is allowed only when both the canonical server root and application
+database are absent. Repair handles legacy and partial installations. Update
+never installs a missing product.
+EOF
+}
+
+fail() {
+    printf '[FAIL] %s\n' "$1" >&2
+    exit "${2:-1}"
+}
+
+info() {
+    printf '[INFO] %s\n' "$1" >&2
+}
+
+ok() {
+    printf '[OK] %s\n' "$1" >&2
+}
+
+require_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        return 0
+    fi
+
+    if command -v sudo >/dev/null 2>&1; then
+        if sudo -n true >/dev/null 2>&1; then
+            exec sudo "$0" "$@"
+        fi
+
+        if [ -t 0 ]; then
+            exec sudo "$0" "$@"
+        fi
+    fi
+
+    fail "This command must run as root."
+}
+
+select_product() {
+    PRODUCT="$1"
+    PRODUCT_DEV_BRANCH="dev"
+
+    case "$PRODUCT" in
+        herika)
+            PRODUCT_ROOT="$WEB_ROOT/HerikaServer"
+            PRODUCT_DATABASE="dwemer"
+            PRODUCT_REPOSITORY="https://github.com/abeiro/HerikaServer.git"
+            PRODUCT_PRODUCTION_BRANCH="aiagent"
+            PRODUCT_VHOST=""
+            PRODUCT_PORT="8081"
+            ;;
+        stobe)
+            PRODUCT_ROOT="$WEB_ROOT/StobeServer"
+            PRODUCT_DATABASE="stobe"
+            PRODUCT_REPOSITORY="https://github.com/Dwemer-Dynamics/StobeServer.git"
+            PRODUCT_PRODUCTION_BRANCH="stobe"
+            PRODUCT_VHOST="stobe.conf"
+            PRODUCT_PORT="8083"
+            ;;
+        dialectic)
+            PRODUCT_ROOT="$WEB_ROOT/DialecticServer"
+            PRODUCT_DATABASE="dialectic"
+            PRODUCT_REPOSITORY="https://github.com/Dwemer-Dynamics/DialecticServer.git"
+            PRODUCT_PRODUCTION_BRANCH="dialectic"
+            PRODUCT_VHOST="dialectic.conf"
+            PRODUCT_PORT="8088"
+            ;;
+        *)
+            fail "Unknown product '$PRODUCT'. Expected herika, stobe, or dialectic." 64
+            ;;
+    esac
+}
+
+resolve_branch() {
+    case "$1" in
+        main|"") printf '%s\n' "$PRODUCT_PRODUCTION_BRANCH" ;;
+        dev) printf '%s\n' "$PRODUCT_DEV_BRANCH" ;;
+        "$PRODUCT_PRODUCTION_BRANCH"|"$PRODUCT_DEV_BRANCH") printf '%s\n' "$1" ;;
+        *) fail "Invalid branch '$1' for $PRODUCT. Expected main or dev." 64 ;;
+    esac
+}
+
+acquire_operation_lock() {
+    local owner_pid=""
+
+    mkdir -p "$(dirname "$LOCK_PATH")"
+    if ! mkdir "$LOCK_PATH" 2>/dev/null; then
+        if [ -f "$LOCK_PATH/pid" ]; then
+            owner_pid="$(sed -n '1p' "$LOCK_PATH/pid" 2>/dev/null || true)"
+        fi
+        case "$owner_pid" in
+            ''|*[!0-9]*) ;;
+            *)
+                if kill -0 "$owner_pid" >/dev/null 2>&1; then
+                    fail "Another server install, update, repair, or uninstall operation is running." 75
+                fi
+                ;;
+        esac
+
+        rm -f "$LOCK_PATH/pid" 2>/dev/null || true
+        rmdir "$LOCK_PATH" 2>/dev/null || true
+        if ! mkdir "$LOCK_PATH" 2>/dev/null; then
+            fail "Another server install, update, repair, or uninstall operation is running." 75
+        fi
+    fi
+
+    printf '%s\n' "$$" > "$LOCK_PATH/pid"
+    LOCK_HELD=1
+    trap on_exit EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+}
+
+postgres_ready() {
+    pg_isready -p "$POSTGRES_PORT" -d template1 -q >/dev/null 2>&1
+}
+
+start_postgres() {
+    local attempt
+
+    if postgres_ready; then
+        return 0
+    fi
+
+    if [ -x /etc/init.d/postgresql ]; then
+        /etc/init.d/postgresql start >/dev/null 2>&1 || true
+    elif command -v service >/dev/null 2>&1; then
+        service postgresql start >/dev/null 2>&1 || true
+    fi
+
+    for attempt in $(seq 1 20); do
+        if postgres_ready; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    fail "PostgreSQL did not become ready."
+}
+
+database_exists() {
+    local database="$1"
+    if [ "$(id -u)" -eq 0 ]; then
+        sudo -u postgres psql -p "$POSTGRES_PORT" -d template1 -X -tAc \
+            "SELECT 1 FROM pg_database WHERE datname = '$database' LIMIT 1" 2>/dev/null \
+            | tr -d '[:space:]'
+    else
+        PGPASSWORD=dwemer psql -h localhost -p "$POSTGRES_PORT" -U "$DATABASE_ROLE" \
+            -d template1 -X -tAc \
+            "SELECT 1 FROM pg_database WHERE datname = '$database' LIMIT 1" 2>/dev/null \
+            | tr -d '[:space:]'
+    fi
+}
+
+database_state() {
+    if ! postgres_ready; then
+        printf 'unknown\n'
+        return 0
+    fi
+
+    if [ "$(database_exists "$PRODUCT_DATABASE")" = "1" ]; then
+        printf 'present\n'
+    else
+        printf 'absent\n'
+    fi
+}
+
+repository_state() {
+    if [ -d "$PRODUCT_ROOT/.git" ]; then
+        printf 'managed\n'
+    elif [ -e "$PRODUCT_ROOT" ]; then
+        printf 'legacy\n'
+    else
+        printf 'absent\n'
+    fi
+}
+
+install_state() {
+    local repo_state
+    local db_state
+
+    repo_state="$(repository_state)"
+    db_state="$(database_state)"
+
+    if [ "$repo_state" = "managed" ] && [ "$db_state" != "absent" ]; then
+        printf 'installed\n'
+    elif [ "$repo_state" = "absent" ] && [ "$db_state" != "present" ]; then
+        printf 'not-installed\n'
+    else
+        printf 'needs-repair\n'
+    fi
+}
+
+current_branch() {
+    if [ ! -d "$PRODUCT_ROOT/.git" ]; then
+        return 0
+    fi
+    git -c safe.directory="$PRODUCT_ROOT" -C "$PRODUCT_ROOT" branch --show-current 2>/dev/null || true
+}
+
+current_version() {
+    local candidate
+    for candidate in .version_number.txt versionnumber.txt .version.txt; do
+        if [ -s "$PRODUCT_ROOT/$candidate" ]; then
+            sed -n '1p' "$PRODUCT_ROOT/$candidate" | tr -d '\r'
+            return 0
+        fi
+    done
+}
+
+json_escape() {
+    sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s/\n/\\n/g'
+}
+
+status_json() {
+    local state
+    local repo_state
+    local db_state
+    local branch
+    local version
+    local db_json
+
+    state="$(install_state)"
+    repo_state="$(repository_state)"
+    db_state="$(database_state)"
+    branch="$(current_branch | json_escape)"
+    version="$(current_version | json_escape)"
+
+    case "$db_state" in
+        present) db_json=true ;;
+        absent) db_json=false ;;
+        *) db_json=null ;;
+    esac
+
+    printf '{"schema_version":1,"product":"%s","state":"%s","repository_state":"%s","database_present":%s,"root":"%s","database":"%s","branch":"%s","version":"%s","production_branch":"%s","development_branch":"%s","port":%s}' \
+        "$PRODUCT" "$state" "$repo_state" "$db_json" "$PRODUCT_ROOT" "$PRODUCT_DATABASE" \
+        "$branch" "$version" "$PRODUCT_PRODUCTION_BRANCH" "$PRODUCT_DEV_BRANCH" "$PRODUCT_PORT"
+}
+
+status_human() {
+    printf '%-10s %-15s branch=%-10s version=%s database=%s\n' \
+        "$PRODUCT" "$(install_state)" "$(current_branch)" "$(current_version)" "$(database_state)"
+}
+
+show_status() {
+    local requested="$1"
+    local first=1
+    local key
+
+    if [ "$requested" != "all" ]; then
+        select_product "$requested"
+        if [ "$JSON_OUTPUT" -eq 1 ]; then
+            status_json
+            printf '\n'
+        else
+            status_human
+        fi
+        return 0
+    fi
+
+    if [ "$JSON_OUTPUT" -eq 1 ]; then
+        printf '{"schema_version":1,"servers":['
+    fi
+
+    for key in herika stobe dialectic; do
+        select_product "$key"
+        if [ "$JSON_OUTPUT" -eq 1 ]; then
+            if [ "$first" -eq 0 ]; then
+                printf ','
+            fi
+            status_json
+            first=0
+        else
+            status_human
+        fi
+    done
+
+    if [ "$JSON_OUTPUT" -eq 1 ]; then
+        printf ']}\n'
+    fi
+}
+
+ensure_pgvector() {
+    local helper="/usr/local/bin/ensure_portable_pgvector"
+    if [ ! -x "$helper" ]; then
+        helper="/home/dwemer/dwemerdistro/bin/ensure_portable_pgvector"
+    fi
+    [ -x "$helper" ] || fail "Portable pgvector helper is unavailable."
+    "$helper" >/dev/null || fail "Portable pgvector setup failed."
+}
+
+ensure_database_role() {
+    local role_exists
+
+    role_exists="$(sudo -u postgres psql -p "$POSTGRES_PORT" -d template1 -X -tAc \
+        "SELECT 1 FROM pg_roles WHERE rolname = '$DATABASE_ROLE' LIMIT 1" 2>/dev/null | tr -d '[:space:]')"
+    if [ "$role_exists" = "1" ]; then
+        return 0
+    fi
+
+    info "Creating the shared DwemerDistro PostgreSQL role."
+    sudo -u postgres psql -p "$POSTGRES_PORT" -d template1 -v ON_ERROR_STOP=1 \
+        -c "CREATE ROLE $DATABASE_ROLE LOGIN PASSWORD 'dwemer';" >/dev/null \
+        || fail "Could not create the shared PostgreSQL role."
+}
+
+create_database_if_missing() {
+    if [ "$(database_exists "$PRODUCT_DATABASE")" = "1" ]; then
+        return 0
+    fi
+
+    info "Creating database $PRODUCT_DATABASE."
+    sudo -u postgres createdb -p "$POSTGRES_PORT" --maintenance-db=template1 --owner="$DATABASE_ROLE" \
+        --encoding=UTF8 --locale=C --template=template0 "$PRODUCT_DATABASE" \
+        || fail "Could not create database $PRODUCT_DATABASE."
+    if [ "$INSTALL_CLEANUP_ACTIVE" -eq 1 ]; then
+        INSTALL_DATABASE_CREATED=1
+    fi
+}
+
+run_psql_file() {
+    local file="$1"
+    [ -f "$file" ] || fail "Required database file is missing: $file"
+    PGPASSWORD=dwemer psql -h localhost -p "$POSTGRES_PORT" -U "$DATABASE_ROLE" -d "$PRODUCT_DATABASE" \
+        -v ON_ERROR_STOP=1 -f "$file"
+}
+
+table_exists() {
+    local table="$1"
+    PGPASSWORD=dwemer psql -h localhost -p "$POSTGRES_PORT" -U "$DATABASE_ROLE" -d "$PRODUCT_DATABASE" \
+        -X -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='$table' LIMIT 1" \
+        2>/dev/null | tr -d '[:space:]'
+}
+
+# Run a server's PHP migration entry point and reject errors that it reports
+# without reflecting in its process exit code.
+run_php_updates() {
+    local label="$1"
+    local update_runner="$2"
+    local update_log
+    local update_status
+    local unexpected_errors
+    local herika_payload_ready
+
+    update_log="$(mktemp)" || fail "Could not create a temporary migration log."
+    php "$update_runner" 2>&1 | tee "$update_log"
+    update_status=${PIPESTATUS[0]}
+
+    if [ "$update_status" -ne 0 ]; then
+        rm -f "$update_log"
+        fail "$label database updates failed."
+    fi
+
+    unexpected_errors="$(grep -Ei '\[error\]|Failed to apply patch' "$update_log" 2>/dev/null || true)"
+    if [ -n "$unexpected_errors" ] && [ "$PRODUCT" = "herika" ] \
+        && grep -Fq 'Failed to apply patch eventlog_session_payload 20260807001' "$update_log"; then
+        herika_payload_ready="$(PGPASSWORD=dwemer psql -h localhost -p "$POSTGRES_PORT" \
+            -U "$DATABASE_ROLE" -d "$PRODUCT_DATABASE" -X -tAc \
+            "SELECT CASE WHEN EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='eventlog'
+                  AND column_name='sess' AND data_type='text'
+            ) AND to_regclass('public.eventlog_view') IS NOT NULL THEN 1 ELSE 0 END" \
+            2>/dev/null | tr -d '[:space:]')"
+
+        if [ "$herika_payload_ready" != "1" ]; then
+            rm -f "$update_log"
+            fail "$label eventlog session migration is incomplete."
+        fi
+
+        unexpected_errors="$(printf '%s\n' "$unexpected_errors" \
+            | grep -Fv 'ALTER TABLE public.eventlog ALTER COLUMN sess TYPE text ERROR:' \
+            | grep -Fv 'Failed to apply patch eventlog_session_payload 20260807001' || true)"
+
+        if [ "$herika_payload_ready" = "1" ] && [ -z "$unexpected_errors" ]; then
+            info "Recording the completed Herika eventlog session migration."
+            PGPASSWORD=dwemer psql -h localhost -p "$POSTGRES_PORT" \
+                -U "$DATABASE_ROLE" -d "$PRODUCT_DATABASE" -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+INSERT INTO public.database_versioning (tablename, version)
+VALUES ('eventlog_session_payload', 20260807001)
+ON CONFLICT (tablename) DO UPDATE SET version = EXCLUDED.version;
+SQL
+        fi
+    fi
+
+    if [ -n "$unexpected_errors" ]; then
+        rm -f "$update_log"
+        fail "$label database updates reported an error."
+    fi
+
+    rm -f "$update_log"
+}
+
+bootstrap_herika() {
+    local baseline="$PRODUCT_ROOT/data/database_default.sql"
+    local seed="$PRODUCT_ROOT/data/core_action_seed.sql"
+    local update_runner="$PRODUCT_ROOT/debug/apply_db_updates.php"
+
+    sudo -u postgres psql -p "$POSTGRES_PORT" -d "$PRODUCT_DATABASE" -v ON_ERROR_STOP=1 \
+        -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm; ALTER DATABASE $PRODUCT_DATABASE OWNER TO $DATABASE_ROLE;" >/dev/null
+
+    if [ "$(table_exists eventlog)" != "1" ]; then
+        info "Importing the HerikaServer database baseline."
+        run_psql_file "$baseline" >/dev/null
+        if [ -s "$seed" ]; then
+            run_psql_file "$seed" >/dev/null
+        fi
+    fi
+
+    [ -f "$update_runner" ] || fail "HerikaServer database update runner is missing."
+    run_php_updates "HerikaServer" "$update_runner"
+
+    if [ ! -f "$PRODUCT_ROOT/conf/conf.php" ] && [ -f "$PRODUCT_ROOT/conf/conf.sample.php" ]; then
+        cp "$PRODUCT_ROOT/conf/conf.sample.php" "$PRODUCT_ROOT/conf/conf.php"
+    fi
+}
+
+bootstrap_stobe() {
+    local baseline="$PRODUCT_ROOT/data/schema.sql"
+    local update_runner="$PRODUCT_ROOT/debug/run_db_updates.php"
+
+    sudo -u postgres psql -p "$POSTGRES_PORT" -d "$PRODUCT_DATABASE" -v ON_ERROR_STOP=1 \
+        -c "CREATE EXTENSION IF NOT EXISTS vector; ALTER DATABASE $PRODUCT_DATABASE OWNER TO $DATABASE_ROLE;" >/dev/null
+
+    if [ "$(table_exists general_settings)" != "1" ]; then
+        info "Importing the StobeServer database baseline."
+        run_psql_file "$baseline" >/dev/null
+    fi
+
+    [ -f "$update_runner" ] || fail "StobeServer database update runner is missing."
+    run_php_updates "StobeServer" "$update_runner"
+}
+
+bootstrap_dialectic() {
+    local baseline="$PRODUCT_ROOT/data/database_default.sql"
+    local update_runner="$PRODUCT_ROOT/tools/bootstrap-database.php"
+    local utf8_migration="$PRODUCT_ROOT/tools/migrate-dialectic-db-utf8-wsl.sh"
+    local encoding
+
+    encoding="$(sudo -u postgres psql -p "$POSTGRES_PORT" -d template1 -X -tAc "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = '$PRODUCT_DATABASE'" | tr -d '[:space:]')"
+    if [ "$encoding" = "SQL_ASCII" ]; then
+        [ -f "$utf8_migration" ] || fail "Dialectic UTF-8 migration tool is missing: $utf8_migration"
+        # The existing migration uses the distro's default cluster through sudo.
+        [ "$POSTGRES_PORT" -eq 5432 ] || fail "Run the Dialectic UTF-8 migration manually for a non-default PostgreSQL port."
+        # Preserve the legacy updater's backup-and-verify migration before bootstrapping.
+        info "Migrating the existing Dialectic database from SQL_ASCII to UTF8."
+        if ! DIALECTIC_DB_NAME="$PRODUCT_DATABASE" \
+            DIALECTIC_DB_USER="$DATABASE_ROLE" bash "$utf8_migration"; then
+            fail "Dialectic UTF-8 migration failed. Check the retained migration backup before retrying."
+        fi
+        encoding="$(sudo -u postgres psql -p "$POSTGRES_PORT" -d template1 -X -tAc "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = '$PRODUCT_DATABASE'" | tr -d '[:space:]')"
+    fi
+    if [ "$encoding" != "UTF8" ]; then
+        fail "Dialectic database must use UTF8; found ${encoding:-unknown}."
+    fi
+
+    sudo -u postgres psql -p "$POSTGRES_PORT" -d "$PRODUCT_DATABASE" -v ON_ERROR_STOP=1 \
+        -c "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS vector; ALTER DATABASE $PRODUCT_DATABASE OWNER TO $DATABASE_ROLE;" >/dev/null
+
+    if [ "$(table_exists eventlog)" != "1" ]; then
+        info "Importing the DialecticServer database baseline."
+        run_psql_file "$baseline" >/dev/null
+    fi
+
+    [ -f "$update_runner" ] || fail "DialecticServer database update runner is missing."
+    run_php_updates "DialecticServer" "$update_runner"
+}
+
+bootstrap_database() {
+    start_postgres
+    ensure_pgvector
+    ensure_database_role
+    create_database_if_missing
+
+    case "$PRODUCT" in
+        herika) bootstrap_herika ;;
+        stobe) bootstrap_stobe ;;
+        dialectic) bootstrap_dialectic ;;
+    esac
+}
+
+write_vhost() {
+    local ports_conf="/etc/apache2/ports.conf"
+    local vhost_path
+
+    case "$PRODUCT" in
+        stobe)
+            vhost_path="/etc/apache2/sites-available/stobe.conf"
+            if ! grep -Eq '^[[:space:]]*Listen[[:space:]]+([^:[:space:]]+:)?8083([[:space:]]|$)' "$ports_conf"; then
+                printf 'Listen 0.0.0.0:8083\n' >> "$ports_conf"
+            fi
+            cat > "$vhost_path" <<'EOF'
+<VirtualHost *:8083>
+	DocumentRoot /var/www/html
+	Alias /StobeServer /var/www/html/StobeServer
+	<Directory /var/www/html>
+		Options -Indexes +FollowSymLinks
+		AllowOverride All
+		Require all granted
+	</Directory>
+	<Directory /var/www/html/StobeServer>
+		Options -Indexes +FollowSymLinks
+		AllowOverride All
+		Require all granted
+	</Directory>
+	<Directory /var/www/html/StobeServer/soundcache>
+		Options +Indexes +FollowSymLinks
+		AllowOverride None
+		Require all granted
+	</Directory>
+	ErrorLog ${APACHE_LOG_DIR}/stobe_error.log
+	CustomLog ${APACHE_LOG_DIR}/stobe_access.log combined
+	LimitRequestLine 65535
+</VirtualHost>
+EOF
+            ;;
+        dialectic)
+            vhost_path="/etc/apache2/sites-available/dialectic.conf"
+            if ! grep -Eq '^[[:space:]]*Listen[[:space:]]+([^:[:space:]]+:)?8088([[:space:]]|$)' "$ports_conf"; then
+                printf 'Listen 0.0.0.0:8088\n' >> "$ports_conf"
+            fi
+            cat > "$vhost_path" <<'EOF'
+<VirtualHost *:8088>
+	DocumentRoot /var/www/html
+	Alias /DialecticServer /var/www/html/DialecticServer
+	<Directory /var/www/html>
+		Options -Indexes +FollowSymLinks
+		AllowOverride All
+		Require all granted
+	</Directory>
+	<Directory /var/www/html/DialecticServer>
+		Options -Indexes +FollowSymLinks
+		AllowOverride All
+		Require all granted
+	</Directory>
+	<Directory /var/www/html/DialecticServer/soundcache>
+		Options +Indexes +FollowSymLinks
+		AllowOverride None
+		Require all granted
+	</Directory>
+	ErrorLog ${APACHE_LOG_DIR}/dialectic_error.log
+	CustomLog ${APACHE_LOG_DIR}/dialectic_access.log combined
+	LimitRequestLine 65535
+</VirtualHost>
+EOF
+            ;;
+        *) return 0 ;;
+    esac
+
+    a2ensite "$PRODUCT_VHOST" >/dev/null 2>&1 || true
+}
+
+remove_vhost() {
+    local ports_conf="/etc/apache2/ports.conf"
+    if [ -z "$PRODUCT_VHOST" ]; then
+        return 0
+    fi
+
+    a2dissite "$PRODUCT_VHOST" >/dev/null 2>&1 || true
+    rm -f "/etc/apache2/sites-enabled/$PRODUCT_VHOST" "/etc/apache2/sites-available/$PRODUCT_VHOST"
+    rm -f "/var/log/apache2/${PRODUCT}_error.log" "/var/log/apache2/${PRODUCT}_access.log"
+    if [ -f "$ports_conf" ]; then
+        sed -i "/^[[:space:]]*Listen[[:space:]].*:${PRODUCT_PORT}[[:space:]]*$/d; /^[[:space:]]*Listen[[:space:]]*${PRODUCT_PORT}[[:space:]]*$/d" "$ports_conf"
+    fi
+}
+
+apply_permissions() {
+    mkdir -p "$PRODUCT_ROOT/log"
+    chown -R "$APP_USER:$WEB_GROUP" "$PRODUCT_ROOT"
+    chmod -R ug+rwX,o-rwx "$PRODUCT_ROOT"
+    find "$PRODUCT_ROOT" -type d -exec chmod g+s {} + >/dev/null 2>&1 || true
+
+    if [ "$PRODUCT" = "dialectic" ]; then
+        local helper="/usr/local/bin/ensure_dialectic_runtime_permissions"
+        if [ ! -x "$helper" ]; then
+            helper="/home/dwemer/dwemerdistro/bin/ensure_dialectic_runtime_permissions"
+        fi
+        [ ! -x "$helper" ] || "$helper" "$PRODUCT_ROOT" >/dev/null || true
+    fi
+}
+
+record_install() {
+    local update_include_path="/home/dwemer/.update_include_$PRODUCT"
+
+    mkdir -p "$STATE_ROOT"
+    cat > "$STATE_ROOT/$PRODUCT.state" <<EOF
+schema_version=1
+product=$PRODUCT
+root=$PRODUCT_ROOT
+database=$PRODUCT_DATABASE
+repository=$PRODUCT_REPOSITORY
+installed_branch=$(current_branch)
+managed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+EOF
+    if [ -n "$PRODUCT_BACKUP" ]; then
+        printf 'backup=%s\n' "$PRODUCT_BACKUP" >> "$STATE_ROOT/$PRODUCT.state"
+    fi
+    chmod 600 "$STATE_ROOT/$PRODUCT.state"
+    # Installation defaults to included, but repair/update must preserve the user's saved choice.
+    if [ ! -e "$update_include_path" ]; then
+        printf '1\n' > "$update_include_path"
+    fi
+}
+
+safe_remove_temp() {
+    local path="$1"
+    case "$path" in
+        "$WEB_ROOT/.ddistro-$PRODUCT-"*) rm -rf -- "$path" ;;
+        *) fail "Refusing to remove unexpected temporary path: $path" ;;
+    esac
+}
+
+safe_remove_product_root() {
+    [ "$PRODUCT_ROOT" = "$WEB_ROOT/HerikaServer" ] \
+        || [ "$PRODUCT_ROOT" = "$WEB_ROOT/StobeServer" ] \
+        || [ "$PRODUCT_ROOT" = "$WEB_ROOT/DialecticServer" ] \
+        || fail "Refusing to remove unexpected product root: $PRODUCT_ROOT"
+    rm -rf -- "$PRODUCT_ROOT"
+}
+
+clone_repository() {
+    local branch="$1"
+    local temp_root="$WEB_ROOT/.ddistro-$PRODUCT-$$"
+
+    [ ! -e "$temp_root" ] || safe_remove_temp "$temp_root"
+    info "Cloning $PRODUCT from $branch."
+    if ! git clone --branch "$branch" --single-branch "$PRODUCT_REPOSITORY" "$temp_root"; then
+        safe_remove_temp "$temp_root"
+        printf '[FAIL] Could not clone %s.\n' "$PRODUCT" >&2
+        return 1
+    fi
+
+    if [ ! -d "$temp_root/.git" ]; then
+        safe_remove_temp "$temp_root"
+        printf '[FAIL] The cloned %s repository is invalid.\n' "$PRODUCT" >&2
+        return 1
+    fi
+
+    if ! mv "$temp_root" "$PRODUCT_ROOT"; then
+        safe_remove_temp "$temp_root"
+        printf '[FAIL] Could not activate the cloned %s repository.\n' "$PRODUCT" >&2
+        return 1
+    fi
+    if [ "$INSTALL_CLEANUP_ACTIVE" -eq 1 ]; then
+        INSTALL_ROOT_CREATED=1
+    fi
+}
+
+update_repository() {
+    local branch="$1"
+    [ -d "$PRODUCT_ROOT/.git" ] || fail "$PRODUCT is not installed."
+
+    info "Updating $PRODUCT on branch $branch."
+    # Installs use --single-branch, so fetch the requested channel into an explicit remote-tracking
+    # ref before switching between Main and Dev.
+    git -c safe.directory="$PRODUCT_ROOT" -C "$PRODUCT_ROOT" fetch origin \
+        "+refs/heads/$branch:refs/remotes/origin/$branch" \
+        || fail "Could not fetch $PRODUCT branch $branch."
+    git -c safe.directory="$PRODUCT_ROOT" -C "$PRODUCT_ROOT" checkout -B "$branch" "origin/$branch" \
+        || fail "Could not select $PRODUCT branch $branch."
+    git -c safe.directory="$PRODUCT_ROOT" -C "$PRODUCT_ROOT" reset --hard "origin/$branch" \
+        || fail "Could not update $PRODUCT to origin/$branch."
+}
+
+copy_legacy_runtime() {
+    local backup_root="$1"
+    local relative
+
+    for relative in conf/conf.php conf/character_map.json; do
+        if [ -e "$backup_root/$relative" ]; then
+            mkdir -p "$PRODUCT_ROOT/$(dirname "$relative")"
+            cp -a "$backup_root/$relative" "$PRODUCT_ROOT/$relative"
+        fi
+    done
+
+    for relative in uploads data/voices soundcache log ext; do
+        if [ -d "$backup_root/$relative" ]; then
+            mkdir -p "$PRODUCT_ROOT/$relative"
+            cp -a "$backup_root/$relative/." "$PRODUCT_ROOT/$relative/"
+        fi
+    done
+
+    if [ -d "$backup_root/conf" ]; then
+        find "$backup_root/conf" -maxdepth 1 -type f -name 'conf_*.php' -exec cp -a {} "$PRODUCT_ROOT/conf/" \;
+    fi
+}
+
+adopt_legacy_repository() {
+    local branch="$1"
+    local backup_root="${PRODUCT_ROOT}.pre-managed-$(date -u '+%Y%m%d%H%M%S')"
+
+    [ -e "$PRODUCT_ROOT" ] || return 0
+    [ ! -d "$PRODUCT_ROOT/.git" ] || return 0
+
+    info "Preserving the legacy $PRODUCT deployment at $backup_root."
+    mv "$PRODUCT_ROOT" "$backup_root" || fail "Could not preserve the legacy $PRODUCT deployment."
+    if ! clone_repository "$branch"; then
+        mv "$backup_root" "$PRODUCT_ROOT" || true
+        fail "Could not adopt the legacy $PRODUCT deployment."
+    fi
+    copy_legacy_runtime "$backup_root"
+    PRODUCT_BACKUP="$backup_root"
+}
+
+on_exit() {
+    local status=$?
+
+    if [ "$INSTALL_CLEANUP_ACTIVE" -eq 1 ] && [ "$status" -ne 0 ]; then
+        printf '[INFO] Removing partial %s installation.\n' "$PRODUCT" >&2
+        if [ "$INSTALL_DATABASE_CREATED" -eq 1 ] \
+            && postgres_ready \
+            && [ "$(database_exists "$PRODUCT_DATABASE")" = "1" ]; then
+            sudo -u postgres psql -p "$POSTGRES_PORT" -d template1 -c \
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$PRODUCT_DATABASE' AND pid <> pg_backend_pid();" \
+                >/dev/null 2>&1 || true
+            sudo -u postgres dropdb -p "$POSTGRES_PORT" --if-exists "$PRODUCT_DATABASE" >/dev/null 2>&1 || true
+        fi
+        if [ "$INSTALL_ROOT_CREATED" -eq 1 ] && [ -e "$PRODUCT_ROOT" ]; then
+            safe_remove_product_root
+        fi
+        rm -f "$STATE_ROOT/$PRODUCT.state"
+    fi
+
+    if [ "$LOCK_HELD" -eq 1 ]; then
+        rm -f "$LOCK_PATH/pid" 2>/dev/null || true
+        rmdir "$LOCK_PATH" 2>/dev/null || true
+        LOCK_HELD=0
+    fi
+
+    trap - EXIT INT TERM
+    exit "$status"
+}
+
+install_product() {
+    local branch="$1"
+    local repo_state
+    local db_state
+
+    repo_state="$(repository_state)"
+    db_state="$(database_state)"
+    if [ "$repo_state" != "absent" ] || [ "$db_state" = "present" ]; then
+        fail "$PRODUCT is not completely absent. Use repair or uninstall first."
+    fi
+
+    INSTALL_CLEANUP_ACTIVE=1
+    clone_repository "$branch" || fail "Could not install $PRODUCT."
+    bootstrap_database
+
+    write_vhost
+    apply_permissions
+    record_install
+    INSTALL_CLEANUP_ACTIVE=0
+    ok "$PRODUCT installed."
+}
+
+repair_product() {
+    local branch="$1"
+    local repo_state
+    local state
+
+    state="$(install_state)"
+    [ "$state" != "not-installed" ] || fail "$PRODUCT is not installed. Use install instead of repair."
+    repo_state="$(repository_state)"
+    case "$repo_state" in
+        absent) clone_repository "$branch" || fail "Could not restore the $PRODUCT repository." ;;
+        legacy) adopt_legacy_repository "$branch" ;;
+        managed) update_repository "$branch" ;;
+    esac
+
+    bootstrap_database
+    write_vhost
+    apply_permissions
+    record_install
+    ok "$PRODUCT repaired."
+}
+
+update_product() {
+    local branch="$1"
+    [ "$(install_state)" = "installed" ] || fail "$PRODUCT is not installed. Update never installs missing products."
+    update_repository "$branch"
+    bootstrap_database
+    write_vhost
+    apply_permissions
+    record_install
+    ok "$PRODUCT updated."
+}
+
+stop_product_processes() {
+    case "$PRODUCT" in
+        herika)
+            pkill -f "$PRODUCT_ROOT/service/start.sh" >/dev/null 2>&1 || true
+            pkill -f "$PRODUCT_ROOT/service/manager.php" >/dev/null 2>&1 || true
+            ;;
+        dialectic)
+            pkill -f "$PRODUCT_ROOT/service/start.sh" >/dev/null 2>&1 || true
+            pkill -f "$PRODUCT_ROOT/service/manager.php" >/dev/null 2>&1 || true
+            rm -f /tmp/dialectic_background_processor.lock
+            ;;
+    esac
+}
+
+drop_product_database() {
+    start_postgres
+    if [ "$(database_exists "$PRODUCT_DATABASE")" != "1" ]; then
+        return 0
+    fi
+
+    sudo -u postgres psql -p "$POSTGRES_PORT" -d template1 -v ON_ERROR_STOP=1 \
+        -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$PRODUCT_DATABASE' AND pid <> pg_backend_pid();" >/dev/null
+    sudo -u postgres dropdb -p "$POSTGRES_PORT" --if-exists "$PRODUCT_DATABASE" || fail "Could not drop database $PRODUCT_DATABASE."
+}
+
+# The migration helper writes only to the default cluster and this fixed backup
+# directory. Check it before uninstall mutates anything, then recheck on removal.
+purge_dialectic_migration_backups() {
+    [ "$PRODUCT" = "dialectic" ] || return 0
+    [ "$POSTGRES_PORT" = "5432" ] || return 0
+
+    local backup_dir="/var/backups/dialectic"
+    local databases candidate name
+
+    [ ! -L "$backup_dir" ] || fail "Refusing redirected Dialectic migration backup directory."
+    if [ -e "$backup_dir" ]; then
+        [ -d "$backup_dir" ] && [ "$(readlink -e -- "$backup_dir")" = "$backup_dir" ] \
+            || fail "Refusing an unexpected Dialectic migration backup path."
+    fi
+
+    start_postgres
+    databases="$(sudo -u postgres psql -p "$POSTGRES_PORT" -d template1 -X -At -v ON_ERROR_STOP=1 -c \
+        "SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
+         WHERE d.datname ~ '^dialectic_sql_ascii_[0-9]{14}$'
+           AND r.rolname = '$DATABASE_ROLE' AND NOT d.datistemplate
+           AND pg_encoding_to_char(d.encoding) = 'SQL_ASCII' AND NOT d.datallowconn
+           AND EXISTS (SELECT 1 FROM pg_db_role_setting s
+                       WHERE s.setdatabase = d.oid AND s.setrole = 0
+                         AND 'default_transaction_read_only=on' = ANY(s.setconfig))
+         ORDER BY d.datname;")" || fail "Could not inspect Dialectic migration recovery databases."
+
+    [ "${1:-}" != "--check" ] || return 0
+
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        [[ "$candidate" =~ ^dialectic_sql_ascii_[0-9]{14}$ ]] \
+            || fail "Refusing an unexpected Dialectic migration database name."
+        sudo -u postgres dropdb -p "$POSTGRES_PORT" --maintenance-db=template1 --if-exists "$candidate" \
+            || fail "Could not remove Dialectic migration recovery database $candidate."
+    done <<< "$databases"
+
+    [ -d "$backup_dir" ] || return 0
+    for candidate in "$backup_dir"/dialectic-*-sql-ascii.dump; do
+        name="${candidate##*/}"
+        [[ "$name" =~ ^dialectic-[0-9]{14}-sql-ascii\.dump$ ]] || continue
+        # The helper creates regular postgres-owned dumps. Never follow links or
+        # remove unrelated files/directories merely because their names match.
+        [ ! -L "$candidate" ] && [ -f "$candidate" ] || continue
+        [ "$(readlink -e -- "$candidate")" = "$candidate" ] \
+            && [ "$(stat -c '%U' -- "$candidate")" = "postgres" ] || continue
+        rm -f -- "$candidate" || fail "Could not remove Dialectic migration recovery dump $name."
+    done
+}
+
+remove_managed_backups() {
+    local candidate
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        case "$candidate" in
+            "$PRODUCT_ROOT.pre-git-"[0-9]*|"$PRODUCT_ROOT.pre-managed-"[0-9]*)
+                rm -rf -- "$candidate"
+                ;;
+            *)
+                info "Leaving unrecognized backup path untouched: $candidate"
+                ;;
+        esac
+    done < <(find "$WEB_ROOT" -maxdepth 1 -mindepth 1 -type d \
+        \( -name "$(basename "$PRODUCT_ROOT").pre-git-[0-9]*" -o -name "$(basename "$PRODUCT_ROOT").pre-managed-[0-9]*" \) \
+        -print 2>/dev/null)
+
+    if [ "$PRODUCT" = "herika" ] && [ -d /home/dwemer/DwemerDistro-Backups/Doctor ]; then
+        find /home/dwemer/DwemerDistro-Backups/Doctor -maxdepth 1 -type f \
+            -name 'dwemer-before-schema-recovery-[0-9]*.dump' -delete
+    fi
+}
+
+uninstall_product() {
+    local confirmation="$1"
+    local expected
+
+    expected="PURGE-$(printf '%s' "$PRODUCT" | tr '[:lower:]' '[:upper:]')"
+    [ "$confirmation" = "$expected" ] || fail "Uninstall confirmation did not match $expected." 64
+
+    purge_dialectic_migration_backups --check
+    stop_product_processes
+    remove_vhost
+    drop_product_database
+    safe_remove_product_root
+    remove_managed_backups
+    purge_dialectic_migration_backups
+    rm -f "$STATE_ROOT/$PRODUCT.state"
+    printf '1\n' > "/home/dwemer/.update_include_$PRODUCT"
+
+    if command -v service >/dev/null 2>&1 && service apache2 status >/dev/null 2>&1; then
+        service apache2 reload >/dev/null 2>&1 || true
+    fi
+
+    ok "$PRODUCT uninstalled."
+}
+
+startup_product() {
+    local key="$1"
+    local state
+
+    select_product "$key"
+    state="$(repository_state)"
+    if [ "$state" = "absent" ]; then
+        if [ "$(database_state)" = "present" ]; then
+            info "$key has an orphaned database and needs repair; startup skipped."
+        else
+            info "$key is not installed; startup skipped."
+        fi
+        remove_vhost
+        return 0
+    fi
+    if [ "$state" = "legacy" ]; then
+        info "$key uses a legacy deployment; database startup will continue without Git adoption."
+    fi
+    bootstrap_database
+    write_vhost
+    apply_permissions
+}
+
+startup_installed_products() {
+    local key
+    local failed=0
+
+    # Keep products independent: a broken migration in one server must not prevent healthy
+    # installed servers from preparing their databases, vhosts, and runtime permissions.
+    for key in herika stobe dialectic; do
+        if ! (startup_product "$key"); then
+            info "$key startup preparation failed; continuing with the remaining products."
+            failed=1
+        fi
+    done
+
+    return "$failed"
+}
+
+case "$POSTGRES_PORT" in
+    ''|*[!0-9]*) fail "Invalid PostgreSQL port override." 64 ;;
+esac
+if [ "$POSTGRES_PORT" -lt 1 ] || [ "$POSTGRES_PORT" -gt 65535 ]; then
+    fail "PostgreSQL port override must be between 1 and 65535." 64
+fi
+
+COMMAND="${1:-}"
+[ -n "$COMMAND" ] || {
+    usage
+    exit 64
+}
+shift
+
+case "$COMMAND" in
+    status)
+        REQUESTED="all"
+        if [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; then
+            REQUESTED="$1"
+            shift
+        fi
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                --json) JSON_OUTPUT=1 ;;
+                *) fail "Unknown status option '$1'." 64 ;;
+            esac
+            shift
+        done
+        show_status "$REQUESTED"
+        ;;
+    install|update|repair)
+        [ "$#" -gt 0 ] || fail "$COMMAND requires a product." 64
+        select_product "$1"
+        shift
+        BRANCH_CHOICE="main"
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                --branch)
+                    [ "$#" -ge 2 ] || fail "--branch requires main or dev." 64
+                    BRANCH_CHOICE="$2"
+                    shift
+                    ;;
+                *) fail "Unknown $COMMAND option '$1'." 64 ;;
+            esac
+            shift
+        done
+        require_root "$COMMAND" "$PRODUCT" --branch "$BRANCH_CHOICE"
+        acquire_operation_lock
+        start_postgres
+        BRANCH=$(resolve_branch "$BRANCH_CHOICE") || exit $?
+        case "$COMMAND" in
+            install) install_product "$BRANCH" ;;
+            update) update_product "$BRANCH" ;;
+            repair) repair_product "$BRANCH" ;;
+        esac
+        ;;
+    uninstall)
+        [ "$#" -gt 0 ] || fail "uninstall requires a product." 64
+        select_product "$1"
+        shift
+        CONFIRMATION=""
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                --confirm)
+                    [ "$#" -ge 2 ] || fail "--confirm requires a value." 64
+                    CONFIRMATION="$2"
+                    shift
+                    ;;
+                *) fail "Unknown uninstall option '$1'." 64 ;;
+            esac
+            shift
+        done
+        require_root uninstall "$PRODUCT" --confirm "$CONFIRMATION"
+        acquire_operation_lock
+        uninstall_product "$CONFIRMATION"
+        ;;
+    startup)
+        REQUESTED="${1:-all}"
+        [ "$#" -le 1 ] || fail "startup accepts at most one product." 64
+        if [ "$REQUESTED" != "all" ]; then
+            select_product "$REQUESTED"
+        fi
+        require_root startup "$REQUESTED"
+        acquire_operation_lock
+        start_postgres
+        if [ "$REQUESTED" = "all" ]; then
+            startup_installed_products
+        else
+            startup_product "$REQUESTED"
+        fi
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        fail "Unknown command '$COMMAND'." 64
+        ;;
+esac

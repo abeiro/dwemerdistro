@@ -55,6 +55,9 @@ fi
 
 print_header "UPDATING PHP CONFIGURATION"
 
+# Only a freshly prepared image has the marker that enables this initialization.
+/usr/local/bin/initialize_fresh_distro || exit 1
+
 printf ">> Updating PHP Apache configuration...\n"
 cp /home/dwemer/dwemerdistro/etc/php.ini /etc/php/8.2/apache2/php.ini 2>/dev/null
 if [ $? -eq 0 ]; then
