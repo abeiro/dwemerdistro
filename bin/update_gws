@@ -538,7 +538,15 @@ update_installed_server() {
         return 1
     fi
 
-    status_json=$("$SERVER_MANAGER" status "$product" --json 2>/dev/null || true)
+    if ! status_json=$("$SERVER_MANAGER" status "$product" --json); then
+        print_warning "Could not inspect $product; update skipped."
+        return 1
+    fi
+    current_branch=$(git -c safe.directory="$root" -C "$root" branch --show-current 2>/dev/null || true)
+    case "$current_branch" in
+        dev|unstable) branch_choice="dev" ;;
+    esac
+
     if printf '%s' "$status_json" | grep -q '"state":"needs-repair"' \
         && printf '%s' "$status_json" | grep -q '"repository_state":"legacy"'; then
         print_warning "$product uses a legacy deployment; adopting it with a retained backup before updating."
@@ -549,15 +557,21 @@ update_installed_server() {
         print_warning "$product legacy deployment could not be adopted."
         return 1
     fi
+    # Older launchers clone selected servers before update_gws creates their databases.
+    # Finish those installations without installing a product whose files are absent.
+    if printf '%s' "$status_json" | grep -q '"state":"needs-repair"' \
+        && printf '%s' "$status_json" | grep -q '"repository_state":"managed"'; then
+        if "$SERVER_MANAGER" repair "$product" --branch "$branch_choice"; then
+            print_success "$product updated successfully"
+            return 0
+        fi
+        print_warning "$product update failed."
+        return 1
+    fi
     if ! printf '%s' "$status_json" | grep -q '"state":"installed"'; then
         print_warning "$product is not installed; update skipped."
         return 0
     fi
-
-    current_branch=$(git -c safe.directory="$root" -C "$root" branch --show-current 2>/dev/null || true)
-    case "$current_branch" in
-        dev|unstable) branch_choice="dev" ;;
-    esac
 
     print_header "UPDATING ${product^^} SERVER" "$current_branch"
     if "$SERVER_MANAGER" update "$product" --branch "$branch_choice"; then

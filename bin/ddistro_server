@@ -473,11 +473,24 @@ bootstrap_stobe() {
 bootstrap_dialectic() {
     local baseline="$PRODUCT_ROOT/data/database_default.sql"
     local update_runner="$PRODUCT_ROOT/tools/bootstrap-database.php"
+    local utf8_migration="$PRODUCT_ROOT/tools/migrate-dialectic-db-utf8-wsl.sh"
     local encoding
 
     encoding="$(sudo -u postgres psql -p "$POSTGRES_PORT" -d template1 -X -tAc "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = '$PRODUCT_DATABASE'" | tr -d '[:space:]')"
+    if [ "$encoding" = "SQL_ASCII" ]; then
+        [ -f "$utf8_migration" ] || fail "Dialectic UTF-8 migration tool is missing: $utf8_migration"
+        # The existing migration uses the distro's default cluster through sudo.
+        [ "$POSTGRES_PORT" -eq 5432 ] || fail "Run the Dialectic UTF-8 migration manually for a non-default PostgreSQL port."
+        # Preserve the legacy updater's backup-and-verify migration before bootstrapping.
+        info "Migrating the existing Dialectic database from SQL_ASCII to UTF8."
+        if ! DIALECTIC_DB_NAME="$PRODUCT_DATABASE" \
+            DIALECTIC_DB_USER="$DATABASE_ROLE" bash "$utf8_migration"; then
+            fail "Dialectic UTF-8 migration failed. Check the retained migration backup before retrying."
+        fi
+        encoding="$(sudo -u postgres psql -p "$POSTGRES_PORT" -d template1 -X -tAc "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = '$PRODUCT_DATABASE'" | tr -d '[:space:]')"
+    fi
     if [ "$encoding" != "UTF8" ]; then
-        fail "Dialectic database must use UTF8; found ${encoding:-unknown}. Use the existing UTF-8 migration before repair."
+        fail "Dialectic database must use UTF8; found ${encoding:-unknown}."
     fi
 
     sudo -u postgres psql -p "$POSTGRES_PORT" -d "$PRODUCT_DATABASE" -v ON_ERROR_STOP=1 \
