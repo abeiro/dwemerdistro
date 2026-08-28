@@ -550,7 +550,7 @@ update_installed_server() {
     if printf '%s' "$status_json" | grep -q '"state":"needs-repair"' \
         && printf '%s' "$status_json" | grep -q '"repository_state":"legacy"'; then
         print_warning "$product uses a legacy deployment; adopting it with a retained backup before updating."
-        if "$SERVER_MANAGER" repair "$product" --branch "$branch_choice"; then
+        if echo "$PASSWORD" | sudo -S "$SERVER_MANAGER" repair "$product" --branch "$branch_choice"; then
             print_success "$product legacy deployment adopted and updated successfully"
             return 0
         fi
@@ -561,7 +561,7 @@ update_installed_server() {
     # Finish those installations without installing a product whose files are absent.
     if printf '%s' "$status_json" | grep -q '"state":"needs-repair"' \
         && printf '%s' "$status_json" | grep -q '"repository_state":"managed"'; then
-        if "$SERVER_MANAGER" repair "$product" --branch "$branch_choice"; then
+        if echo "$PASSWORD" | sudo -S "$SERVER_MANAGER" repair "$product" --branch "$branch_choice"; then
             print_success "$product updated successfully"
             return 0
         fi
@@ -574,7 +574,8 @@ update_installed_server() {
     fi
 
     print_header "UPDATING ${product^^} SERVER" "$current_branch"
-    if "$SERVER_MANAGER" update "$product" --branch "$branch_choice"; then
+    # Legacy launchers run this script as dwemer without a visible sudo prompt.
+    if echo "$PASSWORD" | sudo -S "$SERVER_MANAGER" update "$product" --branch "$branch_choice"; then
         print_success "$product updated successfully"
         return 0
     fi
