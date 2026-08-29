@@ -22,6 +22,14 @@ Uninstall permanently removes only the selected server's canonical files, retain
 
 `update_gws` updates only servers that are already installed. A missing server is skipped and is never installed as an update side effect. `start_env` similarly starts and reports only installed servers.
 
+## System release version
+
+`system-release.json` is the release signal for DwemerDistro core and shared components. Increment its semantic version whenever users need to run **Update System** for a core or shared-component release.
+
+The launcher compares this published version with `/var/lib/dwemerdistro/system-release.json`. It replaces the installed marker only after the core update and shared-component update both succeed, so an interrupted or failed update remains visible to the user.
+
+The legacy `.version.txt` file remains unchanged for older launchers and is not the authoritative system-release version.
+
 ## Distribution payload rule
 
 Release payloads must report all three products as `not-installed` with no application databases. Build and validate them with the installer repository's `scripts/Prepare-EmptyDistroPayload.ps1`; do not distribute a tar exported directly from a development distro.
