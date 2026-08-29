@@ -44,6 +44,9 @@ else
     exit 1
 fi
 
+printf ">> Checking installed server repository origins...\n"
+/usr/local/bin/ddistro_server migrate-remotes all || exit 1
+
 printf ">> Copying configuration files to /etc...\n"
 find /home/dwemer/dwemerdistro/etc/ -type f ! -name "php.ini" -exec cp {} /etc/ \; 2>/dev/null
 if [ $? -eq 0 ]; then

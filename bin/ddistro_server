@@ -32,6 +32,7 @@ Manage optional DwemerDistro application servers.
 
 Commands:
   status [all|herika|stobe|dialectic] [--json]
+  migrate-remotes [all|herika|stobe|dialectic]
   install <herika|stobe|dialectic> [--branch main|dev]
   update <herika|stobe|dialectic> [--branch main|dev]
   repair <herika|stobe|dialectic> [--branch main|dev]
@@ -83,7 +84,7 @@ select_product() {
         herika)
             PRODUCT_ROOT="$WEB_ROOT/HerikaServer"
             PRODUCT_DATABASE="dwemer"
-            PRODUCT_REPOSITORY="https://github.com/abeiro/HerikaServer.git"
+            PRODUCT_REPOSITORY="https://github.com/Dwemer-Dynamics/HerikaServer.git"
             PRODUCT_PRODUCTION_BRANCH="aiagent"
             PRODUCT_VHOST=""
             PRODUCT_PORT="8081"
@@ -108,6 +109,67 @@ select_product() {
             fail "Unknown product '$PRODUCT'. Expected herika, stobe, or dialectic." 64
             ;;
     esac
+}
+
+# Retarget only recognized legacy HerikaServer origins after proving the new
+# canonical repository and all supported branches are reachable.
+migrate_product_repository_origin() {
+    local origin_url
+    local remote_refs
+    local required_branch
+    local state_path="$STATE_ROOT/herika.state"
+
+    [ "$PRODUCT" = "herika" ] || return 0
+    [ -d "$PRODUCT_ROOT/.git" ] || return 0
+
+    origin_url="$(git -c safe.directory="$PRODUCT_ROOT" -C "$PRODUCT_ROOT" remote get-url origin 2>/dev/null || true)"
+    if [ -z "$origin_url" ]; then
+        info "HerikaServer has no origin remote; repository migration was skipped."
+        return 0
+    fi
+
+    case "$origin_url" in
+        https://github.com/Dwemer-Dynamics/HerikaServer.git|\
+        https://github.com/Dwemer-Dynamics/HerikaServer|\
+        git@github.com:Dwemer-Dynamics/HerikaServer.git)
+            ;;
+        https://github.com/abeiro/HerikaServer.git|\
+        https://github.com/abeiro/HerikaServer|\
+        git@github.com:abeiro/HerikaServer.git)
+            remote_refs="$(git -c safe.directory="$PRODUCT_ROOT" -C "$PRODUCT_ROOT" \
+                ls-remote --heads "$PRODUCT_REPOSITORY" \
+                refs/heads/aiagent refs/heads/dev refs/heads/unstable 2>/dev/null)" \
+                || fail "Could not verify the canonical HerikaServer repository; the legacy origin was retained."
+            for required_branch in aiagent dev unstable; do
+                printf '%s\n' "$remote_refs" | grep -Eq "[[:space:]]refs/heads/$required_branch$" \
+                    || fail "Canonical HerikaServer branch $required_branch is unavailable; the legacy origin was retained."
+            done
+
+            git -c safe.directory="$PRODUCT_ROOT" -C "$PRODUCT_ROOT" remote set-url origin "$PRODUCT_REPOSITORY" \
+                || fail "Could not set the canonical HerikaServer origin; the legacy origin was retained."
+            if ! git -c safe.directory="$PRODUCT_ROOT" -C "$PRODUCT_ROOT" fetch --no-tags --atomic origin \
+                "+refs/heads/aiagent:refs/remotes/origin/aiagent" \
+                "+refs/heads/dev:refs/remotes/origin/dev" \
+                "+refs/heads/unstable:refs/remotes/origin/unstable"; then
+                git -c safe.directory="$PRODUCT_ROOT" -C "$PRODUCT_ROOT" remote set-url origin "$origin_url" \
+                    || fail "HerikaServer migration failed and the legacy origin could not be restored."
+                fail "Could not fetch the canonical HerikaServer branches; the legacy origin was restored."
+            fi
+            ok "HerikaServer repository migrated to Dwemer Dynamics."
+            ;;
+        *)
+            info "Custom HerikaServer origin detected; leaving it unchanged."
+            return 0
+            ;;
+    esac
+
+    if [ -f "$state_path" ]; then
+        sed -i \
+            -e "s|^repository=https://github.com/abeiro/HerikaServer.git$|repository=$PRODUCT_REPOSITORY|" \
+            -e "s|^repository=https://github.com/abeiro/HerikaServer$|repository=$PRODUCT_REPOSITORY|" \
+            -e "s|^repository=git@github.com:abeiro/HerikaServer.git$|repository=$PRODUCT_REPOSITORY|" \
+            "$state_path"
+    fi
 }
 
 resolve_branch() {
@@ -689,6 +751,7 @@ update_repository() {
     local branch="$1"
     [ -d "$PRODUCT_ROOT/.git" ] || fail "$PRODUCT is not installed."
 
+    migrate_product_repository_origin
     info "Updating $PRODUCT on branch $branch."
     # Installs use --single-branch, so fetch the requested channel into an explicit remote-tracking
     # ref before switching between Main and Dev.
@@ -1012,6 +1075,23 @@ case "$COMMAND" in
             shift
         done
         show_status "$REQUESTED"
+        ;;
+    migrate-remotes)
+        REQUESTED="${1:-all}"
+        [ "$#" -le 1 ] || fail "migrate-remotes accepts at most one product." 64
+        if [ "$REQUESTED" != "all" ]; then
+            select_product "$REQUESTED"
+        fi
+        require_root migrate-remotes "$REQUESTED"
+        acquire_operation_lock
+        case "$REQUESTED" in
+            all|herika)
+                select_product herika
+                migrate_product_repository_origin
+                ;;
+            stobe|dialectic)
+                ;;
+        esac
         ;;
     install|update|repair)
         [ "$#" -gt 0 ] || fail "$COMMAND requires a product." 64
