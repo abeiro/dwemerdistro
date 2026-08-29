@@ -38,6 +38,47 @@ print_warning() {
     printf "${RED}[WARNING] %s${NC}\n" "$1"
 }
 
+# Move only known Dwemer-managed checkouts; leave custom forks untouched.
+ensure_managed_remote() {
+    local repo_path="$1"
+    local target_remote="$2"
+    shift 2
+    local current_remote=""
+    local normalized_current=""
+    local allowed_remote=""
+    local normalized_allowed=""
+
+    if [ ! -d "$repo_path/.git" ]; then
+        print_warning "Managed repository is missing: $repo_path"
+        return 1
+    fi
+
+    current_remote=$(git -C "$repo_path" config --get remote.origin.url 2>/dev/null || true)
+    normalized_current=$(printf '%s' "$current_remote" | sed -E \
+        -e 's#^git@github.com:#https://github.com/#' \
+        -e 's#^ssh://git@github.com/#https://github.com/#' \
+        -e 's#^http://github.com/#https://github.com/#' \
+        -e 's#\.git$##')
+
+    for allowed_remote in "$target_remote" "$@"; do
+        normalized_allowed=$(printf '%s' "$allowed_remote" | sed -E \
+            -e 's#^git@github.com:#https://github.com/#' \
+            -e 's#^ssh://git@github.com/#https://github.com/#' \
+            -e 's#^http://github.com/#https://github.com/#' \
+            -e 's#\.git$##')
+        if [ "$normalized_current" = "$normalized_allowed" ]; then
+            if [ "$current_remote" != "$target_remote" ]; then
+                print_warning "Migrating $(basename "$repo_path") origin to $target_remote"
+                git -C "$repo_path" remote set-url origin "$target_remote"
+            fi
+            return 0
+        fi
+    done
+
+    print_warning "Refusing to replace unexpected origin for $repo_path: ${current_remote:-missing}"
+    return 1
+}
+
 ensure_portable_pgvector() {
     local helper="/usr/local/bin/ensure_portable_pgvector"
 
@@ -509,6 +550,11 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+ensure_managed_remote \
+    /home/dwemer/dwemerdistro \
+    https://github.com/Dwemer-Dynamics/DwemerDistro-Core.git \
+    https://github.com/abeiro/dwemerdistro.git || COMPONENT_UPDATE_FAILED=1
+
 # Main title
 printf "\n${BOLD}=======================================================${NC}\n"
 printf "${BOLD}          DWEMER DYNAMICS SYSTEM UPDATE                ${NC}\n"
@@ -617,82 +663,93 @@ cd /home/dwemer/minime-t5
 BRANCH=$(git branch --show-current)
 print_header "UPDATING MINI-ME & TXT2VEC" "$BRANCH"
 
-printf ">> Resetting repository...\n"
-git reset --hard HEAD
-printf ">> Pulling latest changes...\n"
-XTTS_UPDATE_OK=1
-if git fetch origin "$BRANCH"; then
-    XTTS_CONFLICT_FILE="xtts_api_server/voice_management.py"
-    if [ -f "$XTTS_CONFLICT_FILE" ] \
-        && ! git ls-files --error-unmatch -- "$XTTS_CONFLICT_FILE" >/dev/null 2>&1 \
-        && git cat-file -e "origin/${BRANCH}:${XTTS_CONFLICT_FILE}" 2>/dev/null; then
-        XTTS_BACKUP_ROOT="/home/dwemer/xtts-api-server-update-backups/$(date -u '+%Y%m%d%H%M%S')"
-        mkdir -p "$XTTS_BACKUP_ROOT/$(dirname "$XTTS_CONFLICT_FILE")"
-        if mv "$XTTS_CONFLICT_FILE" "$XTTS_BACKUP_ROOT/$XTTS_CONFLICT_FILE"; then
-            print_warning "Backed up conflicting local XTTS file to $XTTS_BACKUP_ROOT/$XTTS_CONFLICT_FILE"
-        else
-            print_warning "Failed to back up conflicting XTTS file: $XTTS_CONFLICT_FILE"
-            XTTS_UPDATE_OK=0
-        fi
-    fi
-
-    if [ "$XTTS_UPDATE_OK" -eq 1 ] && ! git merge --ff-only "origin/$BRANCH"; then
-        XTTS_UPDATE_OK=0
-    fi
-else
-    XTTS_UPDATE_OK=0
+MINIME_UPDATE_OK=1
+if ! ensure_managed_remote \
+    /home/dwemer/minime-t5 \
+    https://github.com/Dwemer-Dynamics/minime-t5.git \
+    https://github.com/abeiro/minime-t5.git; then
+    MINIME_UPDATE_OK=0
 fi
-if [ -x /home/dwemer/python-minime/bin/pip ]; then
+if [ "$MINIME_UPDATE_OK" -eq 1 ]; then
+    printf ">> Resetting repository...\n"
+    git reset --hard HEAD
+    printf ">> Pulling latest changes...\n"
+    git pull --ff-only || MINIME_UPDATE_OK=0
+fi
+if [ "$MINIME_UPDATE_OK" -eq 1 ] && [ -x /home/dwemer/python-minime/bin/pip ]; then
     printf ">> Updating Python dependencies...\n"
     /home/dwemer/python-minime/bin/pip install -r requirements.txt
-else
+elif [ "$MINIME_UPDATE_OK" -eq 1 ]; then
     print_warning "MiniMe virtual environment not found at /home/dwemer/python-minime; run the MiniMe component installer to install dependencies."
 fi
 
 # Set permissions for minime-t5
 sudo chown -R dwemer:dwemer /home/dwemer/minime-t5
 sudo chmod -R 755 /home/dwemer/minime-t5
-printf "${GREEN}[SUCCESS] MiniMe & TXT2VEC updated successfully${NC}\n"
+if [ "$MINIME_UPDATE_OK" -eq 1 ]; then
+    printf "${GREEN}[SUCCESS] MiniMe & TXT2VEC updated successfully${NC}\n"
+else
+    COMPONENT_UPDATE_FAILED=1
+    print_warning "MiniMe & TXT2VEC update failed."
+fi
 
 # MeloTTS update
 cd /home/dwemer/MeloTTS
 BRANCH=$(git branch --show-current)
 print_header "UPDATING MELO-TTS" "$BRANCH"
 
-printf ">> Resetting repository...\n"
-git reset --hard HEAD
-printf ">> Pulling latest changes...\n"
-git pull
+MELO_UPDATE_OK=1
+if ! ensure_managed_remote \
+    /home/dwemer/MeloTTS \
+    https://github.com/Dwemer-Dynamics/MeloTTS.git \
+    https://github.com/abeiro/MeloTTS.git; then
+    MELO_UPDATE_OK=0
+fi
+if [ "$MELO_UPDATE_OK" -eq 1 ]; then
+    printf ">> Resetting repository...\n"
+    git reset --hard HEAD
+    printf ">> Pulling latest changes...\n"
+    git pull --ff-only || MELO_UPDATE_OK=0
+fi
 
 # Set permissions for MeloTTS
 sudo chown -R dwemer:dwemer /home/dwemer/MeloTTS
 sudo chmod -R 755 /home/dwemer/MeloTTS
-printf "${GREEN}[SUCCESS] MeloTTS updated successfully${NC}\n"
+if [ "$MELO_UPDATE_OK" -eq 1 ]; then
+    printf "${GREEN}[SUCCESS] MeloTTS updated successfully${NC}\n"
+else
+    COMPONENT_UPDATE_FAILED=1
+    print_warning "MeloTTS update failed."
+fi
 
 # LocalWhisper update
 cd /home/dwemer/remote-faster-whisper
 BRANCH=$(git branch --show-current)
 print_header "UPDATING LOCALWHISPER" "$BRANCH"
 
-# Check current remote URL
-CURRENT_REMOTE=$(git config --get remote.origin.url)
-TARGET_REMOTE="https://github.com/abeiro/remote-faster-whisper.git"
-
-# Set the correct remote if needed
-if [ "$CURRENT_REMOTE" != "$TARGET_REMOTE" ]; then
-    print_warning "Setting remote to $TARGET_REMOTE"
-    git remote set-url origin $TARGET_REMOTE
+WHISPER_UPDATE_OK=1
+if ! ensure_managed_remote \
+    /home/dwemer/remote-faster-whisper \
+    https://github.com/Dwemer-Dynamics/remote-faster-whisper.git \
+    https://github.com/abeiro/remote-faster-whisper.git; then
+    WHISPER_UPDATE_OK=0
 fi
-
-printf ">> Resetting repository...\n"
-git reset --hard HEAD
-printf ">> Pulling latest changes...\n"
-git pull
+if [ "$WHISPER_UPDATE_OK" -eq 1 ]; then
+    printf ">> Resetting repository...\n"
+    git reset --hard HEAD
+    printf ">> Pulling latest changes...\n"
+    git pull --ff-only || WHISPER_UPDATE_OK=0
+fi
 
 # Set permissions for LocalWhisper
 sudo chown -R dwemer:dwemer /home/dwemer/remote-faster-whisper
 sudo chmod -R 755 /home/dwemer/remote-faster-whisper
-printf "${GREEN}[SUCCESS] LocalWhisper updated successfully${NC}\n"
+if [ "$WHISPER_UPDATE_OK" -eq 1 ]; then
+    printf "${GREEN}[SUCCESS] LocalWhisper updated successfully${NC}\n"
+else
+    COMPONENT_UPDATE_FAILED=1
+    print_warning "LocalWhisper update failed."
+fi
 
 # Piper TTS update/setup
 # Check if piper directory exists and has README.md
@@ -737,23 +794,54 @@ cd /home/dwemer/xtts-api-server
 BRANCH=$(git branch --show-current)
 print_header "UPDATING CHIM XTTS" "$BRANCH"
 
+XTTS_UPDATE_OK=1
+XTTS_TEMP_BACKUP=$(mktemp -d /home/dwemer/xtts-update.XXXXXX)
+if ! ensure_managed_remote \
+    /home/dwemer/xtts-api-server \
+    https://github.com/Dwemer-Dynamics/xtts-api-server.git \
+    https://github.com/abeiro/xtts-api-server.git; then
+    XTTS_UPDATE_OK=0
+fi
+
 # Backup speakers folder if it exists
 if [ -d "speakers" ]; then
     print_warning "Backing up speakers folder..."
-    cp -r speakers speakers.backup
+    cp -a speakers "$XTTS_TEMP_BACKUP/speakers"
 fi
 
-printf ">> Resetting repository...\n"
-git reset --hard HEAD
-printf ">> Pulling latest changes...\n"
-git pull
+if [ "$XTTS_UPDATE_OK" -eq 1 ]; then
+    printf ">> Resetting repository...\n"
+    git reset --hard HEAD
+    printf ">> Pulling latest changes...\n"
+    if git fetch origin "$BRANCH"; then
+        XTTS_CONFLICT_FILE="xtts_api_server/voice_management.py"
+        if [ -f "$XTTS_CONFLICT_FILE" ] \
+            && ! git ls-files --error-unmatch -- "$XTTS_CONFLICT_FILE" >/dev/null 2>&1 \
+            && git cat-file -e "origin/${BRANCH}:${XTTS_CONFLICT_FILE}" 2>/dev/null; then
+            XTTS_BACKUP_ROOT="/home/dwemer/xtts-api-server-update-backups/$(date -u '+%Y%m%d%H%M%S')"
+            mkdir -p "$XTTS_BACKUP_ROOT/$(dirname "$XTTS_CONFLICT_FILE")"
+            if mv "$XTTS_CONFLICT_FILE" "$XTTS_BACKUP_ROOT/$XTTS_CONFLICT_FILE"; then
+                print_warning "Backed up conflicting local XTTS file to $XTTS_BACKUP_ROOT/$XTTS_CONFLICT_FILE"
+            else
+                print_warning "Failed to back up conflicting XTTS file: $XTTS_CONFLICT_FILE"
+                XTTS_UPDATE_OK=0
+            fi
+        fi
+        if [ "$XTTS_UPDATE_OK" -eq 1 ] && ! git merge --ff-only "origin/$BRANCH"; then
+            XTTS_UPDATE_OK=0
+        fi
+    else
+        XTTS_UPDATE_OK=0
+    fi
+fi
 
-# Restore speakers folder if backup exists
-if [ -d "speakers.backup" ]; then
+# Restore speakers folder after the repository update.
+if [ -d "$XTTS_TEMP_BACKUP/speakers" ]; then
     print_warning "Restoring speakers folder..."
-    cp -r speakers.backup/* speakers/ 2>/dev/null || true
-    rm -rf speakers.backup
+    mkdir -p speakers
+    cp -a "$XTTS_TEMP_BACKUP/speakers/." speakers/ 2>/dev/null || XTTS_UPDATE_OK=0
 fi
+rm -rf -- "$XTTS_TEMP_BACKUP"
 
 # Set permissions for XTTS
 sudo chown -R dwemer:dwemer /home/dwemer/xtts-api-server
@@ -848,22 +936,28 @@ if [ -d /home/dwemer/audio.cpp/.git ]; then
     BRANCH=$(git branch --show-current)
     print_header "UPDATING audio.cpp" "$BRANCH"
 
-    CURRENT_REMOTE=$(git config --get remote.origin.url)
-    TARGET_REMOTE="https://github.com/abeiro/audio.cpp"
-
-    if [ "$CURRENT_REMOTE" != "$TARGET_REMOTE" ]; then
-        print_warning "Setting remote to $TARGET_REMOTE"
-        git remote set-url origin $TARGET_REMOTE
+    AUDIOCPP_UPDATE_OK=1
+    if ! ensure_managed_remote \
+        /home/dwemer/audio.cpp \
+        https://github.com/Dwemer-Dynamics/audio.cpp.git \
+        https://github.com/abeiro/audio.cpp.git; then
+        AUDIOCPP_UPDATE_OK=0
     fi
-
-    printf ">> Resetting repository...\n"
-    git reset --hard HEAD
-    printf ">> Pulling latest changes...\n"
-    git pull
+    if [ "$AUDIOCPP_UPDATE_OK" -eq 1 ]; then
+        printf ">> Resetting repository...\n"
+        git reset --hard HEAD
+        printf ">> Pulling latest changes...\n"
+        git pull --ff-only || AUDIOCPP_UPDATE_OK=0
+    fi
 
     sudo chown -R dwemer:dwemer /home/dwemer/audio.cpp
     sudo chmod -R 755 /home/dwemer/audio.cpp
-    printf "${GREEN}[SUCCESS] audio.cpp updated successfully${NC}\n"
+    if [ "$AUDIOCPP_UPDATE_OK" -eq 1 ]; then
+        printf "${GREEN}[SUCCESS] audio.cpp updated successfully${NC}\n"
+    else
+        COMPONENT_UPDATE_FAILED=1
+        print_warning "audio.cpp update failed."
+    fi
 fi
 
 # PocketTTS update
