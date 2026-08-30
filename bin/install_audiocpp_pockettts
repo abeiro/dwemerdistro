@@ -4,7 +4,7 @@ set -euo pipefail
 
 BASE_DIR="/home/dwemer"
 REPO_DIR="$BASE_DIR/audio.cpp"
-REPO_URL="https://github.com/abeiro/audio.cpp"
+REPO_URL="https://github.com/Dwemer-Dynamics/audio.cpp"
 CUDA_VERSION="${1:-12.8}"
 BUILD_PARALLEL="${BUILD_PARALLEL:-2}"
 
